@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "HealthTranslate",
-    "slug": "ai-health-report-translator",
+    "name": "Bharat Swasth",
+    "slug": "bharat-swasth",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -18,11 +18,23 @@
         "backgroundColor": "#16a34a"
       },
       "package": "com.aihealth.reporttranslator",
-      "permissions": ["CAMERA", "RECORD_AUDIO", "READ_EXTERNAL_STORAGE"]
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE"
+      ]
     },
     "plugins": [
       "expo-router"
     ],
-    "scheme": "healthtranslate"
+    "scheme": "healthtranslate",
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "a06540ed-095b-4f66-a649-b0383eae7476"
+      }
+    }
   }
 }

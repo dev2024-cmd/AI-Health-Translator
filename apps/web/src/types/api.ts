@@ -27,6 +27,11 @@ export interface WebReport {
   extracted_values: ExtractedValueItem[];
   file_name: string;
   file_type: string;
+  image_url?: string;
+  document_type?: 'lab_report' | 'prescription';
+  doctor_name?: string;
+  doctor_clinic?: string;
+  doctor_license?: string;
 }
 
 export interface EscalationTicket {

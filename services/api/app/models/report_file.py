@@ -13,6 +13,7 @@ class ReportFile(Base):
     storage_key = Column(String(255), nullable=False)
     mime = Column(String(50), nullable=False)
     page_count = Column(Integer, nullable=False, default=1)
+    page_order = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships

@@ -10,6 +10,7 @@ class ReportFileResponse(BaseModel):
     storage_key: str
     mime: str
     page_count: int
+    page_order: int = 1
     created_at: datetime
 
 
@@ -50,6 +51,7 @@ class ReportResponse(BaseModel):
     uploaded_by: Optional[str] = None
     source: str
     status: str
+    document_type: str = "lab_report"
     original_language: str
     created_at: datetime
     files: List[ReportFileResponse] = Field(default_factory=list)

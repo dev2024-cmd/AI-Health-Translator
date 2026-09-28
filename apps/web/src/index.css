@@ -3,6 +3,14 @@
 @tailwind utilities;
 
 @layer base {
+  html,
+  body,
+  #root {
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: auto;
+    touch-action: pan-y;
+  }
+
   body {
     @apply bg-slate-50 text-slate-900 font-sans antialiased;
   }

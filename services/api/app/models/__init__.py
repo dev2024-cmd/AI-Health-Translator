@@ -12,10 +12,12 @@ from app.models.escalation import Escalation
 from app.models.call_log import CallLog
 from app.models.consent import Consent
 from app.models.audit_log import AuditLog
+from app.models.device import Device
 
 __all__ = [
     "Base",
     "User",
+    "Device",
     "Patient",
     "CaregiverLink",
     "Report",

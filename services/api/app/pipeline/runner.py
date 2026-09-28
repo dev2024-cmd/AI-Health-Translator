@@ -64,85 +64,175 @@ async def run_report_pipeline(report_id: str, db: AsyncSession) -> Report:
             await db.commit()
             return report
 
-        # ---------------- Stage 1: OCR ----------------
+        # ---------------- Stage 1: Multi-Page OCR ----------------
         report.status = "ocr"
         await db.commit()
 
-        primary_file = report.files[0]
-        file_bytes = await storage.download_file(primary_file.storage_key)
+        # Sort files by page_order so multi-page documents are read in sequence
+        sorted_files = sorted(
+            report.files,
+            key=lambda f: getattr(f, "page_order", 1) or 1
+        )
 
-        ocr_result = await ocr_provider.process_document(file_bytes, primary_file.mime)
-        primary_file.page_count = ocr_result.page_count
+        from app.pipeline.base import OCRPage, OCRResult
+        from app.pipeline.ocr.detector import detect_document_type
+        from app.pipeline.prescription import (
+            PrescriptionExtractor,
+            generate_prescription_explanation,
+        )
+
+        all_pages: list[OCRPage] = []
+        full_text_parts: list[str] = []
+        global_page_num = 1
+
+        for report_file in sorted_files:
+            file_bytes = await storage.download_file(report_file.storage_key)
+            file_ocr_result = await ocr_provider.process_document(file_bytes, report_file.mime)
+            report_file.page_count = file_ocr_result.page_count
+
+            for p in file_ocr_result.pages:
+                page_marker = f"--- Page {global_page_num} ---"
+                full_text_parts.append(f"{page_marker}\n{p.text}")
+                all_pages.append(OCRPage(page_number=global_page_num, text=p.text))
+                global_page_num += 1
+
+        combined_full_text = "\n\n".join(full_text_parts)
+        ocr_result = OCRResult(
+            full_text=combined_full_text,
+            pages=all_pages,
+            page_count=len(all_pages),
+            detected_orientation_angle=0.0,
+        )
+
+        # Document-Type Auto-Detection
+        doc_type = detect_document_type(ocr_result.full_text)
+        report.document_type = doc_type
         await db.commit()
-
-        # ---------------- Stage 2: Extraction ----------------
-        report.status = "extracting"
-        await db.commit()
-
-        extraction_result = await extraction_provider.extract_values(ocr_result)
 
         # Remove any existing extracted values for this report (idempotency)
         for existing in list(report.extracted_values):
             await db.delete(existing)
         await db.flush()
 
-        # ---------------- Stage 3: Deterministic Flagging ----------------
-        report.status = "flagging"
-        await db.commit()
-
         extracted_records = []
-        for row in extraction_result.rows:
-            flag, _ = evaluate_flag(
-                test_name=row.test_name,
-                value=row.value,
-                unit=row.unit,
-                ref_low=row.ref_low,
-                ref_high=row.ref_high,
+
+        # ---------------- Stage 2: Branch by Document Type ----------------
+        if report.document_type == "prescription":
+            # ---------------- Prescription Pipeline ----------------
+            report.status = "extracting"
+            await db.commit()
+
+            prescription_extractor = PrescriptionExtractor()
+            prescription_data = prescription_extractor.process_prescription(ocr_result.full_text)
+
+            # Map medications to extracted values
+            for idx, med in enumerate(prescription_data.medications, 1):
+                # Check if medication is part of a severe drug-drug interaction
+                is_critical = any(
+                    inter.severity in ("CRITICAL", "SEVERE") and (
+                        inter.drug_a.lower() in med.name.lower() or inter.drug_b.lower() in med.name.lower()
+                    )
+                    for inter in prescription_data.interactions
+                )
+                flag = "critical" if is_critical else "normal"
+
+                rec = ExtractedValue(
+                    id=str(uuid.uuid4()),
+                    report_id=report.id,
+                    test_name=f"Rx: {med.name} ({med.form})",
+                    value=float(idx),
+                    unit=med.frequency,
+                    ref_low=None,
+                    ref_high=None,
+                    flag=flag,
+                    page=1,
+                )
+                db.add(rec)
+                extracted_records.append(rec)
+            await db.flush()
+
+            # Plain-language explanation with Doctor Banner & Daily Routine
+            report.status = "simplifying"
+            await db.commit()
+
+            explanation_text = generate_prescription_explanation(
+                data=prescription_data,
+                patient_name=patient_info["name"],
+                language=preferred_lang,
             )
 
-            extracted_record = ExtractedValue(
+            exp_record = Explanation(
                 id=str(uuid.uuid4()),
                 report_id=report.id,
-                test_name=row.test_name,
-                value=row.value,
-                unit=row.unit,
-                ref_low=row.ref_low,
-                ref_high=row.ref_high,
-                flag=flag,
-                page=row.page,
+                language=preferred_lang,
+                text=explanation_text,
+                audio_available=False,
             )
-            db.add(extracted_record)
-            extracted_records.append(extracted_record)
+            db.add(exp_record)
+            await db.flush()
 
-        await db.flush()
+        else:
+            # ---------------- Lab Report Pipeline ----------------
+            report.status = "extracting"
+            await db.commit()
 
-        # ---------------- Stage 4: Simplification ----------------
-        report.status = "simplifying"
-        await db.commit()
+            extraction_result = await extraction_provider.extract_values(ocr_result)
 
-        simplification_result = await simplifier.simplify_report(
-            extracted_values=extracted_records,
-            patient_info=patient_info,
-            language=preferred_lang,
-        )
+            report.status = "flagging"
+            await db.commit()
 
-        # Persist explanation record
-        exp_record = Explanation(
-            id=str(uuid.uuid4()),
-            report_id=report.id,
-            language=preferred_lang,
-            text=simplification_result.plain_text,
-            audio_available=False,
-        )
-        db.add(exp_record)
-        await db.flush()
+            for row in extraction_result.rows:
+                flag, _ = evaluate_flag(
+                    test_name=row.test_name,
+                    value=row.value,
+                    unit=row.unit,
+                    ref_low=row.ref_low,
+                    ref_high=row.ref_high,
+                )
+
+                extracted_record = ExtractedValue(
+                    id=str(uuid.uuid4()),
+                    report_id=report.id,
+                    test_name=row.test_name,
+                    value=row.value,
+                    unit=row.unit,
+                    ref_low=row.ref_low,
+                    ref_high=row.ref_high,
+                    flag=flag,
+                    page=row.page,
+                )
+                db.add(extracted_record)
+                extracted_records.append(extracted_record)
+
+            await db.flush()
+
+            # Simplification
+            report.status = "simplifying"
+            await db.commit()
+
+            simplification_result = await simplifier.simplify_report(
+                extracted_values=extracted_records,
+                patient_info=patient_info,
+                language=preferred_lang,
+            )
+
+            exp_record = Explanation(
+                id=str(uuid.uuid4()),
+                report_id=report.id,
+                language=preferred_lang,
+                text=simplification_result.plain_text,
+                audio_available=False,
+            )
+            db.add(exp_record)
+            await db.flush()
+            explanation_text = simplification_result.plain_text
 
         # ---------------- Stage 5: Voice Synthesis (TTS) ----------------
         try:
             from app.pipeline.tts import get_tts_provider
             tts_provider = get_tts_provider()
             tts_res = await tts_provider.synthesize(
-                text=simplification_result.plain_text,
+                text=explanation_text,
                 language=preferred_lang
             )
             if tts_res.available and tts_res.audio_bytes:

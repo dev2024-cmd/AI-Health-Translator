@@ -41,6 +41,8 @@ export default function RootLayout() {
     >
       <Stack
         screenOptions={{
+          gestureEnabled: false,
+          animation: 'fade',
           headerStyle: {
             backgroundColor: highContrast ? '#000000' : '#16a34a',
           },
@@ -73,10 +75,40 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen
+          name="(tabs)"
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
           name="index"
           options={{
-            title: 'HealthTranslate',
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="welcome"
+          options={{
+            title: 'Welcome (స్వాగతం)',
             headerBackVisible: false,
+          }}
+        />
+        <Stack.Screen
+          name="auth/sign-in"
+          options={{
+            title: 'Quick Unlock (MPIN)',
+          }}
+        />
+        <Stack.Screen
+          name="auth/sign-up"
+          options={{
+            title: 'Create Account',
+          }}
+        />
+        <Stack.Screen
+          name="auth/forgot-pin"
+          options={{
+            title: 'Reset MPIN',
           }}
         />
         <Stack.Screen

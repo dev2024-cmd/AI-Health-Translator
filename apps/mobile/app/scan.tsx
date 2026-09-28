@@ -6,294 +6,639 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  ScrollView,
+  SafeAreaView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAppConfig } from './_layout';
 import { useVoicePrompt } from '../hooks/useVoicePrompt';
-import { GiantButton } from '../components/GiantButton';
+
+interface PageItem {
+  id: string;
+  pageNumber: number;
+  label: string;
+}
 
 export default function ScanScreen() {
   const router = useRouter();
   const { language, highContrast } = useAppConfig();
   const { speak } = useVoicePrompt();
 
+  const [docType, setDocType] = useState<'lab_report' | 'prescription'>('lab_report');
+  const [pages, setPages] = useState<PageItem[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [pipelineStep, setPipelineStep] = useState<string>('');
 
+  // Real-time quality checks state
+  const [lighting, setLighting] = useState<'good' | 'low'>('good');
+  const [stability, setStability] = useState<'steady' | 'moving'>('steady');
+  const [autoCapture, setAutoCapture] = useState<boolean>(true);
+
+  // Offline queue state
+  const [isOffline, setIsOffline] = useState<boolean>(false);
+  const [offlineQueueCount, setOfflineQueueCount] = useState<number>(0);
+
   useEffect(() => {
     const scanPromptMap: Record<string, string> = {
-      en: 'Please hold steady. Point camera at your paper lab report and tap Capture.',
-      hi: 'कृपया फोन सीधा रखें। कैमरे को अपनी रिपोर्ट पर रखें और फोटो खींचें।',
-      te: 'దయచేసి ఫోన్ నిలకడగా ఉంచండి. రిపోర్ట్ పై కెమెరా ఉంచి ఫోటో తీయండి.',
-      bn: 'দয়া করে ক্যামেরা রিপোর্টটির উপর রাখুন এবং ছবি তুলুন।',
+      en: 'Multi-page scanner ready. Align document within the frame. Hold steady with good lighting.',
+      hi: 'दस्तावेज़ स्कैनर तैयार है। दस्तावेज़ को फ्रेम में सीधा रखें और रोशनी अच्छी रखें।',
+      te: 'బహుళ పేజీల స్కానర్ సిద్ధంగా ఉంది. డాక్యుమెంట్‌ను ఫ్రేమ్‌లో ఉంచి నిలకడగా పట్టుకోండి.',
+      bn: 'মাল্টি-পেজ স্ক্যানার প্রস্তুত। ফ্রেমের মধ্যে নথিটি রাখুন।',
     };
     const prompt = scanPromptMap[language] || scanPromptMap['en'];
     speak(prompt, language);
   }, [language]);
 
-  const handleCapture = () => {
+  const handleCapturePage = () => {
+    const newPageNum = pages.length + 1;
+    const newPage: PageItem = {
+      id: 'page-' + Date.now(),
+      pageNumber: newPageNum,
+      label: `Page ${newPageNum}`,
+    };
+    setPages((prev) => [...prev, newPage]);
+
+    speak(`Page ${newPageNum} captured. Add another page or tap Done.`, language);
+  };
+
+  const handleDeletePage = (id: string) => {
+    setPages((prev) =>
+      prev.filter((p) => p.id !== id).map((p, idx) => ({ ...p, pageNumber: idx + 1, label: `Page ${idx + 1}` }))
+    );
+  };
+
+  const handleDone = () => {
+    if (pages.length === 0) {
+      Alert.alert('No Pages Captured', 'Please capture at least one page before proceeding.');
+      return;
+    }
+
     setIsProcessing(true);
-    speak('Capturing report. Please wait while we process.', language);
+    speak('Processing all document pages. Running OCR text extraction and safe analysis.', language);
 
-    // Realistic pipeline simulation
-    setPipelineStep('Reading text from document (OCR)...');
+    setPipelineStep(`Running OCR on ${pages.length} pages in order...`);
     setTimeout(() => {
-      setPipelineStep('Finding test values & checking normal ranges...');
-    }, 1200);
+      setPipelineStep(
+        docType === 'prescription'
+          ? 'Extracting prescribed medicines and checking drug interactions...'
+          : 'Concatenating page markers and checking laboratory reference ranges...'
+      );
+    }, 1400);
 
     setTimeout(() => {
-      setPipelineStep('Translating into simple plain language...');
-    }, 2400);
+      setPipelineStep(
+        docType === 'prescription'
+          ? 'Generating safe daily dosage routine without modifying doctor doses...'
+          : 'Simplifying clinical jargon into Grade 5 plain-language...'
+      );
+    }, 2800);
 
     setTimeout(() => {
       setIsProcessing(false);
       speak('Analysis complete. Showing report explanation.', language);
-      router.replace('/report/rep-mob-1');
-    }, 3600);
+      const targetId = docType === 'prescription' ? 'rep-mob-3' : 'rep-mob-1';
+      router.replace(`/report/${targetId}`);
+    }, 4200);
   };
 
   const handlePickFile = () => {
     Alert.alert(
-      'Document Selected',
-      'Blood_Test_CBC_Report_Sept2026.pdf selected. Beginning analysis.',
+      'Document Selected from Device',
+      'Clinical_Report_MultiPage.pdf (2 pages) selected.',
       [
         {
-          text: 'Process Report',
-          onPress: handleCapture,
+          text: 'Add to Pages',
+          onPress: () => {
+            const p1: PageItem = { id: 'file-p1', pageNumber: pages.length + 1, label: `Page ${pages.length + 1}` };
+            const p2: PageItem = { id: 'file-p2', pageNumber: pages.length + 2, label: `Page ${pages.length + 2}` };
+            setPages((prev) => [...prev, p1, p2]);
+          },
         },
       ]
     );
   };
 
   return (
-    <View
-      style={[
-        styles.container,
-        highContrast && styles.highContrastBg,
-      ]}
-    >
+    <SafeAreaView style={[styles.container, highContrast && styles.highContrastBg]}>
       {isProcessing ? (
         <View style={styles.processingCard}>
           <ActivityIndicator size="large" color="#16a34a" />
           <Text style={[styles.processingTitle, highContrast && styles.highContrastText]}>
-            Analyzing Your Report
+            Analyzing Your Document
           </Text>
           <Text style={[styles.processingStep, highContrast && styles.highContrastSubtext]}>
             {pipelineStep}
           </Text>
           <Text style={styles.processingNote}>
-            🔒 Your health data is processed privately and securely.
+            🔒 Your health data is processed privately and securely under DPDP Act 2023.
           </Text>
         </View>
       ) : (
         <>
-          {/* Instructions pill */}
-          <View style={[styles.instructionBox, highContrast && styles.highContrastBox]}>
-            <Text style={styles.instructionIcon}>💡</Text>
-            <Text style={[styles.instructionText, highContrast && styles.highContrastText]}>
-              Place the paper report on a flat surface with good lighting.
-            </Text>
+          {/* Top Bar: Mode Switcher (Lab Report vs Prescription) */}
+          <View style={styles.topModeBar}>
+            <TouchableOpacity
+              onPress={() => setDocType('lab_report')}
+              style={[
+                styles.modeBtn,
+                docType === 'lab_report' && styles.modeBtnActive,
+                highContrast && styles.modeBtnHighContrast,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.modeBtnText,
+                  docType === 'lab_report' && styles.modeBtnTextActive,
+                ]}
+              >
+                📑 Lab Report
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setDocType('prescription')}
+              style={[
+                styles.modeBtn,
+                docType === 'prescription' && styles.modeBtnActivePrescription,
+                highContrast && styles.modeBtnHighContrast,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.modeBtnText,
+                  docType === 'prescription' && styles.modeBtnTextActive,
+                ]}
+              >
+                📋 Prescription (Rx)
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Viewfinder simulation */}
+          {/* Real-time Quality Guidance Badges */}
+          <View style={styles.qualityRow}>
+            <TouchableOpacity
+              onPress={() => setLighting(lighting === 'good' ? 'low' : 'good')}
+              style={[
+                styles.qualityBadge,
+                lighting === 'low' ? styles.qualityBadgeWarning : styles.qualityBadgeGood,
+              ]}
+            >
+              <Text style={styles.qualityBadgeText}>
+                {lighting === 'good' ? '✓ Good Lighting' : '⚠️ Move to brighter area'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setStability(stability === 'steady' ? 'moving' : 'steady')}
+              style={[
+                styles.qualityBadge,
+                stability === 'moving' ? styles.qualityBadgeWarning : styles.qualityBadgeGood,
+              ]}
+            >
+              <Text style={styles.qualityBadgeText}>
+                {stability === 'steady' ? '✓ Steady' : '⚠️ Hold steady'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setAutoCapture(!autoCapture)}
+              style={styles.autoCaptureBadge}
+            >
+              <Text style={styles.autoCaptureText}>
+                Auto: {autoCapture ? 'ON' : 'OFF'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Viewfinder with Rectangular Document-Guide Overlay & Corner Brackets */}
           <View style={[styles.viewfinder, highContrast && styles.highContrastViewfinder]}>
-            {/* Viewfinder corners */}
+            {/* Viewfinder 4 Corner Brackets */}
             <View style={[styles.corner, styles.topLeft]} />
             <View style={[styles.corner, styles.topRight]} />
             <View style={[styles.corner, styles.bottomLeft]} />
             <View style={[styles.corner, styles.bottomRight]} />
 
             <View style={styles.viewfinderCenter}>
-              <Text style={styles.viewfinderIcon}>📄</Text>
-              <Text style={[styles.viewfinderPrompt, highContrast && styles.highContrastText]}>
-                Align Medical Report Here
+              <Text style={styles.viewfinderIcon}>
+                {docType === 'prescription' ? '📋' : '📄'}
               </Text>
-              <Text style={styles.viewfinderTip}>Ensure all text and values are visible</Text>
+              <Text style={[styles.viewfinderPrompt, highContrast && styles.highContrastText]}>
+                {docType === 'prescription'
+                  ? 'Align Doctor Prescription'
+                  : 'Align Paper Medical Report'}
+              </Text>
+              <Text style={styles.viewfinderTip}>
+                {docType === 'prescription'
+                  ? 'Ensure medication names & doctor instructions fit in frame'
+                  : 'Ensure all test names and biological reference ranges are visible'}
+              </Text>
+            </View>
+
+            {/* Simulated Live Viewfinder Watermark */}
+            <View style={styles.liveIndicator}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveText}>CAMERA READY</Text>
             </View>
           </View>
 
-          {/* Action buttons */}
-          <View style={styles.actionSection}>
-            <GiantButton
-              title="Capture Report"
-              subtitle="Take photo now"
-              icon={<Text style={styles.buttonIcon}>📸</Text>}
-              onPress={handleCapture}
-              variant="primary"
-              isGiant={true}
-              accessibilityLabel="Capture Medical Report"
-            />
-
-            <TouchableOpacity
-              onPress={handlePickFile}
-              style={[styles.secondaryButton, highContrast && styles.highContrastBtn]}
-              accessibilityRole="button"
-              accessibilityLabel="Upload PDF or photo from gallery"
-            >
-              <Text style={[styles.secondaryButtonText, highContrast && styles.highContrastText]}>
-                📁 Choose File / Photo from Gallery
+          {/* Multi-Page Bottom Thumbnail Strip */}
+          <View style={styles.thumbnailSection}>
+            <View style={styles.thumbnailHeader}>
+              <Text style={[styles.thumbnailCount, highContrast && styles.highContrastText]}>
+                Captured Pages: {pages.length}
               </Text>
-            </TouchableOpacity>
+              <TouchableOpacity onPress={handlePickFile}>
+                <Text style={styles.galleryLink}>+ From Gallery / PDF</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbnailScroll}>
+              {pages.length === 0 ? (
+                <View style={styles.emptyStrip}>
+                  <Text style={styles.emptyStripText}>
+                    No pages captured yet. Tap the shutter button below.
+                  </Text>
+                </View>
+              ) : (
+                pages.map((p) => (
+                  <View key={p.id} style={styles.thumbnailItem}>
+                    <View style={styles.thumbnailBox}>
+                      <Text style={styles.thumbnailPageNum}>{p.label}</Text>
+                      <Text style={{ fontSize: 24 }}>📄</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleDeletePage(p.id)}
+                      style={styles.deleteBtn}
+                    >
+                      <Text style={styles.deleteBtnText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+
+          {/* Shutter & Multi-Page Actions */}
+          <View style={styles.actionSection}>
+            <View style={styles.shutterRow}>
+              {/* Add Page Shutter Button */}
+              <TouchableOpacity
+                onPress={handleCapturePage}
+                activeOpacity={0.85}
+                style={[styles.shutterBtn, highContrast && styles.shutterBtnHighContrast]}
+                accessibilityLabel="Capture page"
+              >
+                <Text style={styles.shutterIcon}>📸</Text>
+                <Text style={styles.shutterText}>
+                  {pages.length === 0 ? 'Capture Page 1' : `+ Add Page ${pages.length + 1}`}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Done Button */}
+              <TouchableOpacity
+                onPress={handleDone}
+                disabled={pages.length === 0}
+                activeOpacity={0.85}
+                style={[
+                  styles.doneBtn,
+                  pages.length === 0 && styles.doneBtnDisabled,
+                  docType === 'prescription' && styles.doneBtnPrescription,
+                ]}
+                accessibilityLabel="Finish and analyze document"
+              >
+                <Text style={styles.doneBtnText}>
+                  Done ({pages.length} {pages.length === 1 ? 'Page' : 'Pages'}) →
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
+    padding: 16,
     backgroundColor: '#f8fafc',
     justifyContent: 'space-between',
   },
   highContrastBg: {
     backgroundColor: '#000000',
   },
-  instructionBox: {
+  topModeBar: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#e0f2fe',
-    borderWidth: 1,
-    borderColor: '#7dd3fc',
-    borderRadius: 14,
-    padding: 12,
-    gap: 10,
+    gap: 8,
+    marginBottom: 8,
   },
-  highContrastBox: {
-    backgroundColor: '#121212',
-    borderColor: '#ffffff',
-  },
-  instructionIcon: {
-    fontSize: 22,
-  },
-  instructionText: {
-    fontSize: 13,
-    color: '#0369a1',
-    fontWeight: '700',
+  modeBtn: {
     flex: 1,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+  },
+  modeBtnActive: {
+    borderColor: '#16a34a',
+    backgroundColor: '#f0fdf4',
+  },
+  modeBtnActivePrescription: {
+    borderColor: '#9333ea',
+    backgroundColor: '#faf5ff',
+  },
+  modeBtnHighContrast: {
+    backgroundColor: '#1e293b',
+    borderColor: '#475569',
+  },
+  modeBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#64748b',
+  },
+  modeBtnTextActive: {
+    color: '#0f172a',
+  },
+  qualityRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  qualityBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  qualityBadgeGood: {
+    backgroundColor: '#dcfce7',
+  },
+  qualityBadgeWarning: {
+    backgroundColor: '#fef08a',
+  },
+  qualityBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  autoCaptureBadge: {
+    marginLeft: 'auto',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#e2e8f0',
+  },
+  autoCaptureText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#475569',
   },
   viewfinder: {
     flex: 1,
-    marginVertical: 18,
     borderRadius: 24,
     borderWidth: 2,
     borderColor: '#cbd5e1',
-    borderStyle: 'dashed',
     backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     overflow: 'hidden',
+    minHeight: 240,
   },
   highContrastViewfinder: {
     backgroundColor: '#121212',
     borderColor: '#ffffff',
-    borderStyle: 'solid',
   },
   corner: {
     position: 'absolute',
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     borderColor: '#16a34a',
   },
   topLeft: {
-    top: 16,
-    left: 16,
+    top: 14,
+    left: 14,
     borderTopWidth: 4,
     borderLeftWidth: 4,
+    borderTopLeftRadius: 8,
   },
   topRight: {
-    top: 16,
-    right: 16,
+    top: 14,
+    right: 14,
     borderTopWidth: 4,
     borderRightWidth: 4,
+    borderTopRightRadius: 8,
   },
   bottomLeft: {
-    bottom: 16,
-    left: 16,
+    bottom: 14,
+    left: 14,
     borderBottomWidth: 4,
     borderLeftWidth: 4,
+    borderBottomLeftRadius: 8,
   },
   bottomRight: {
-    bottom: 16,
-    right: 16,
+    bottom: 14,
+    right: 14,
     borderBottomWidth: 4,
     borderRightWidth: 4,
+    borderBottomRightRadius: 8,
   },
   viewfinderCenter: {
     alignItems: 'center',
     padding: 20,
   },
   viewfinderIcon: {
-    fontSize: 48,
-    marginBottom: 8,
+    fontSize: 44,
+    marginBottom: 6,
   },
   viewfinderPrompt: {
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 16,
+    fontWeight: '900',
     color: '#1e293b',
     textAlign: 'center',
   },
   viewfinderTip: {
-    fontSize: 13,
+    fontSize: 11,
     color: '#64748b',
     marginTop: 4,
     textAlign: 'center',
+    maxWidth: 240,
+  },
+  liveIndicator: {
+    position: 'absolute',
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#22c55e',
+  },
+  liveText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  thumbnailSection: {
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  thumbnailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  thumbnailCount: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  galleryLink: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0284c7',
+  },
+  thumbnailScroll: {
+    flexDirection: 'row',
+  },
+  emptyStrip: {
+    paddingVertical: 10,
+  },
+  emptyStripText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  thumbnailItem: {
+    marginRight: 10,
+    position: 'relative',
+  },
+  thumbnailBox: {
+    width: 64,
+    height: 80,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbnailPageNum: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  deleteBtn: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteBtnText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '900',
   },
   actionSection: {
+    marginTop: 6,
+  },
+  shutterRow: {
+    flexDirection: 'row',
     gap: 10,
   },
-  buttonIcon: {
-    fontSize: 28,
-  },
-  secondaryButton: {
-    backgroundColor: '#f1f5f9',
-    borderRadius: 16,
-    paddingVertical: 14,
+  shutterBtn: {
+    flex: 1,
+    backgroundColor: '#16a34a',
+    paddingVertical: 16,
+    borderRadius: 18,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  highContrastBtn: {
-    backgroundColor: '#262626',
-    borderColor: '#ffffff',
+  shutterBtnHighContrast: {
+    backgroundColor: '#22c55e',
   },
-  secondaryButtonText: {
+  shutterIcon: {
+    fontSize: 20,
+  },
+  shutterText: {
+    color: '#ffffff',
     fontSize: 14,
-    fontWeight: '700',
-    color: '#334155',
+    fontWeight: '900',
+  },
+  doneBtn: {
+    paddingHorizontal: 20,
+    backgroundColor: '#0f172a',
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  doneBtnPrescription: {
+    backgroundColor: '#7c3aed',
+  },
+  doneBtnDisabled: {
+    opacity: 0.4,
+  },
+  doneBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900',
   },
   processingCard: {
     flex: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    gap: 16,
   },
   processingTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
     color: '#0f172a',
-    marginTop: 20,
+    textAlign: 'center',
   },
   processingStep: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#16a34a',
     fontWeight: '700',
-    marginTop: 10,
     textAlign: 'center',
   },
   processingNote: {
     fontSize: 12,
     color: '#64748b',
-    marginTop: 28,
     textAlign: 'center',
+    marginTop: 10,
   },
   highContrastText: {
     color: '#ffffff',
   },
   highContrastSubtext: {
-    color: '#4ade80',
+    color: '#cbd5e1',
   },
 });

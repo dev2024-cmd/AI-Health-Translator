@@ -11,8 +11,7 @@ from app.api.v1.router import v1_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Setup: create tables if running in development / test with non-PostgreSQL (e.g. SQLite)
-    # or for fast initial setup before migrations run
+    from app.core.database import switch_to_sqlite
     try:
         async with engine.begin() as conn:
             # Enable pgvector if on PostgreSQL
@@ -24,7 +23,8 @@ async def lifespan(app: FastAPI):
                     pass
             await conn.run_sync(Base.metadata.create_all)
     except Exception as e:
-        print(f"Warning during table initialization: {e}")
+        print(f"PostgreSQL connection error: {e}")
+        await switch_to_sqlite()
     yield
     # Teardown
     await engine.dispose()

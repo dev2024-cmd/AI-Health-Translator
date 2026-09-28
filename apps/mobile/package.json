@@ -12,7 +12,9 @@
   "dependencies": {
     "@ai-health/shared": "workspace:*",
     "expo": "~51.0.0",
+    "expo-local-authentication": "^57.0.3",
     "expo-router": "~3.5.0",
+    "expo-secure-store": "^57.0.4",
     "expo-speech": "~12.0.2",
     "react": "18.2.0",
     "react-native": "0.74.5"

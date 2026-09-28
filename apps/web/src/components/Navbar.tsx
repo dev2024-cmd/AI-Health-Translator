@@ -1,14 +1,17 @@
 import React from 'react';
 import { ShieldCheck, HeartPulse, Stethoscope, FileLock2, Sun, Moon, Globe } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '@ai-health/shared';
+import { getUITranslation } from '../utils/translations.js';
 
 interface NavbarProps {
-  currentView: 'caregiver' | 'health_worker' | 'consent';
-  onViewChange: (view: 'caregiver' | 'health_worker' | 'consent') => void;
+  currentView: 'landing' | 'caregiver' | 'health_worker' | 'consent';
+  onViewChange: (view: 'landing' | 'caregiver' | 'health_worker' | 'consent') => void;
   selectedLanguage: string;
   onLanguageChange: (lang: string) => void;
   highContrast: boolean;
   onToggleHighContrast: () => void;
+  onLockSession?: () => void;
+  onSignOut?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -19,32 +22,47 @@ export const Navbar: React.FC<NavbarProps> = ({
   highContrast,
   onToggleHighContrast,
 }) => {
+  const t = getUITranslation(selectedLanguage);
+
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm transition-colors duration-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Brand Logo & Title */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-emerald-400 flex items-center justify-center shadow-md shadow-brand-500/20 text-white">
-              <HeartPulse className="w-6 h-6 animate-pulse" />
-            </div>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => onViewChange('landing')}>
+            <img
+              src="/logo.png"
+              alt="Bharat Swasth"
+              className="w-11 h-11 rounded-2xl object-contain shadow-sm border border-emerald-500/20 bg-white p-0.5"
+            />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-lg sm:text-xl tracking-tight text-slate-900">
-                  AI Health Report Translator
+                <span className="font-black text-lg sm:text-xl tracking-tight text-slate-900">
+                  Bharat Swasth
                 </span>
-                <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                  <ShieldCheck className="w-3 h-3" /> DPDP 2023
+                <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full">
+                  <ShieldCheck className="w-3.5 h-3.5" /> {t.nav.dpdpBadge}
                 </span>
               </div>
-              <p className="text-xs text-slate-500 hidden sm:block">
-                Simple, voice-enabled lab results in 22 scheduled Indian languages
+              <p className="text-xs text-emerald-700 font-semibold hidden sm:block">
+                Your Health, Simplified. • {t.tagline}
               </p>
             </div>
           </div>
 
           {/* Navigation Role Tabs */}
           <nav className="hidden md:flex items-center p-1 bg-slate-100/80 rounded-xl border border-slate-200 text-sm font-medium">
+            <button
+              id="tab-landing-page"
+              onClick={() => onViewChange('landing')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all ${
+                currentView === 'landing'
+                  ? 'bg-white text-emerald-700 shadow-sm font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {t.nav.home}
+            </button>
             <button
               id="tab-caregiver-portal"
               onClick={() => onViewChange('caregiver')}
@@ -55,7 +73,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <HeartPulse className="w-4 h-4 text-brand-600" />
-              Caregiver Portal
+              {t.nav.caregiver}
             </button>
             <button
               id="tab-health-worker-dashboard"
@@ -67,7 +85,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Stethoscope className="w-4 h-4 text-blue-600" />
-              Health Worker Queue
+              {t.nav.healthWorker}
               <span className="bg-red-100 text-red-700 text-xs px-1.5 py-0.2 rounded-full font-bold">2</span>
             </button>
             <button
@@ -80,7 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <FileLock2 className="w-4 h-4 text-slate-500" />
-              Consent Center
+              {t.nav.consent}
             </button>
           </nav>
 
@@ -123,19 +141,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={() => onViewChange('caregiver')}
             className={`py-1 px-2 rounded-md ${currentView === 'caregiver' ? 'bg-brand-50 text-brand-700 font-bold' : 'text-slate-600'}`}
           >
-            Caregiver
+            {t.nav.caregiver}
           </button>
           <button
             onClick={() => onViewChange('health_worker')}
             className={`py-1 px-2 rounded-md ${currentView === 'health_worker' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600'}`}
           >
-            Health Worker (2)
+            {t.nav.healthWorker} (2)
           </button>
           <button
             onClick={() => onViewChange('consent')}
             className={`py-1 px-2 rounded-md ${currentView === 'consent' ? 'bg-slate-200 text-slate-900 font-bold' : 'text-slate-600'}`}
           >
-            Consent & Privacy
+            {t.nav.consent}
           </button>
         </div>
       </div>

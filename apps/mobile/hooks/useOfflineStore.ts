@@ -53,4 +53,28 @@ export const MOCK_OFFLINE_REPORTS: MobileReport[] = [
       { id: 'm7', test_name: 'HDL (Good)', value: 38.0, unit: 'mg/dL', ref_low: 40.0, ref_high: 60.0, flag: 'low' },
     ],
   },
+  {
+    id: 'rep-mob-3',
+    test_title: 'Doctor Prescription (Dr. R. K. Sharma)',
+    patient_name: 'Sita Ramulu (Father)',
+    date: '2026-09-28',
+    plain_explanation: {
+      en: '⚠️ IMPORTANT: Take this medicine only as prescribed by Dr. R. K. Sharma. Never change your dose or stop taking medication without speaking to your doctor.\n\n📋 Your Daily Routine:\n1. Metformin (500mg): Take 1 tablet in the morning after breakfast and 1 at night after dinner.\n2. Telmisartan (40mg): Take 1 tablet in the morning before food.\n3. Atorvastatin (10mg): Take 1 tablet at night before bed.\n\nIMPORTANT MEDICAL DISCLAIMER: For informational guidance only. Follow doctor instructions.',
+      hi: '⚠️ महत्वपूर्ण सूचना: इस दवा का सेवन केवल डॉ. शर्मा के निर्देशानुसार ही करें। डॉक्टर से पूछे बिना खुराक न बदलें।\n\n1. मेटफॉर्मिन: सुबह नाश्ते के बाद 1 गोली और रात के खाने के बाद 1 गोली।\n2. टेल्मिसर्टन: सुबह खाली पेट 1 गोली।',
+      te: '⚠️ ముఖ్య గమనిక: ఈ ఔషధాలను డాక్టర్ ఆర్. కె. శర్మ గారు సూచించిన విధంగా మాత్రమే వాడండి. మోతాదును ఎప్పుడూ మార్చకండి.\n\n1. మెట్‌ఫార్మిన్: ఉదయం అల్పాహారం తర్వాత 1 మాత్ర మరియు రాత్రి భోజనం తర్వాత 1 మాత్ర.\n2. టెల్మిసార్టన్: ఉదయం టిఫిన్ కంటే ముందు 1 మాత్ర.',
+    },
+    extracted_values: [
+      { id: 'm8', test_name: 'Rx: Metformin (Tablet)', value: 1.0, unit: '1-0-1', ref_low: null, ref_high: null, flag: 'normal' },
+      { id: 'm9', test_name: 'Rx: Telmisartan (Tablet)', value: 2.0, unit: '1-0-0', ref_low: null, ref_high: null, flag: 'normal' },
+      { id: 'm10', test_name: 'Rx: Atorvastatin (Tablet)', value: 3.0, unit: '0-0-1', ref_low: null, ref_high: null, flag: 'normal' },
+    ],
+  },
 ];
+
+export const useOfflineStore = () => {
+  const [reports, setReports] = useState<MobileReport[]>(MOCK_OFFLINE_REPORTS);
+  return {
+    reports,
+    setReports,
+  };
+};

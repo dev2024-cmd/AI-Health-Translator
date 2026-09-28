@@ -13,6 +13,7 @@ class Report(Base):
     uploaded_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     source = Column(String(20), nullable=False, default="app")  # app, whatsapp, web, health_worker
     status = Column(String(20), nullable=False, default="uploaded")  # uploaded, ocr, extracting, explaining, translating, audio, ready, failed
+    document_type = Column(String(30), nullable=False, default="lab_report")  # lab_report, prescription
     original_language = Column(String(10), nullable=False, default="en")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 

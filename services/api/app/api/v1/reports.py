@@ -166,6 +166,7 @@ async def upload_report(
             storage_key=storage_key,
             mime=mime,
             page_count=1,
+            page_order=uploaded_files_count + 1,
         )
         db.add(report_file)
         uploaded_files_count += 1
