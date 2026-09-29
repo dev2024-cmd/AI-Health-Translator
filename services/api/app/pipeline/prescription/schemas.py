@@ -11,6 +11,9 @@ class PrescribedMedication(BaseModel):
     duration: Optional[str] = None  # e.g., "5 days", "1 month"
     daily_schedule: str = ""  # Plain-language schedule e.g., "Take 1 tablet in the morning after breakfast and 1 at night before bed"
     special_instructions: Optional[str] = None
+    what_it_is: Optional[str] = None
+    what_it_is_for: Optional[str] = None
+    what_it_will_do: Optional[str] = None
 
 
 class DrugInteraction(BaseModel):

@@ -22,6 +22,7 @@ from app.core.security import (
     calculate_lockout_duration_minutes,
 )
 from app.core.audit import log_audit_event
+from app.telephony.providers.twilio_verify import OTPProviderError, TwilioVerifyProvider
 from app.models.user import User
 from app.models.patient import Patient
 from app.models.device import Device
@@ -44,6 +45,17 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+def using_live_otp_provider() -> bool:
+    """Real SMS delivery is deliberately disabled while development OTP mode is on."""
+    return not settings.OTP_DEV_MODE and settings.OTP_PROVIDER.lower() == "twilio_verify"
+
+
+async def verify_login_otp(phone: str, code: str) -> bool:
+    if using_live_otp_provider():
+        return await TwilioVerifyProvider().check_code(phone, code)
+    return verify_otp(phone, code)
+
+
 @router.post("/otp/request", response_model=OTPRequestResponse)
 async def request_otp(data: OTPRequest):
     """
@@ -57,7 +69,18 @@ async def request_otp(data: OTPRequest):
             detail="Invalid phone number format",
         )
 
-    code = generate_otp(clean_phone)
+    if using_live_otp_provider():
+        try:
+            await TwilioVerifyProvider().send_code(clean_phone)
+        except OTPProviderError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SMS delivery is temporarily unavailable. Please try again later.",
+            ) from exc
+        code = None
+    else:
+        code = generate_otp(clean_phone)
+
     return OTPRequestResponse(
         message="OTP sent successfully",
         phone_masked=mask_phone(clean_phone),
@@ -75,11 +98,33 @@ async def verify_otp_endpoint(
     Verify OTP and log in. If the user does not exist, registers a new user with the requested role.
     """
     clean_phone = sanitize_phone(data.phone)
-    is_valid = verify_otp(clean_phone, data.code)
+    try:
+        is_valid = await verify_login_otp(clean_phone, data.code)
+    except OTPProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SMS verification is temporarily unavailable. Please try again later.",
+        ) from exc
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired OTP code",
+        )
+
+    requested_role = data.role or "patient"
+    if requested_role == "admin":
+        configured_admin_phone = sanitize_phone(settings.BOOTSTRAP_ADMIN_PHONE)
+        if not settings.BOOTSTRAP_ADMIN_PHONE or clean_phone != configured_admin_phone:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This phone number is not authorized for administrator access",
+            )
+    elif requested_role == "health_worker":
+        # Health workers are provisioned by an administrator or deployment seed,
+        # never by a public sign-up request.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Health worker accounts must be provisioned by an administrator",
         )
 
     # Check if user exists
@@ -89,7 +134,7 @@ async def verify_otp_endpoint(
     if not user:
         user = User(
             phone=clean_phone,
-            role=data.role or "patient",
+            role=requested_role,
             preferred_language=data.preferred_language or "en",
         )
         db.add(user)
@@ -118,6 +163,12 @@ async def verify_otp_endpoint(
             ip_address=client_ip,
         )
     else:
+        # A deployment owner may promote their pre-existing self-service account
+        # only when their number matches the server-side bootstrap setting.
+        if requested_role == "admin" and user.role != "admin":
+            user.role = "admin"
+            await db.flush()
+
         # Audit login
         client_ip = request.client.host if request.client else "unknown"
         await log_audit_event(
@@ -545,7 +596,13 @@ async def reset_pin(
     STRICTLY requires a fresh valid OTP verification for the user's phone number.
     """
     clean_phone = sanitize_phone(data.phone)
-    is_valid = verify_otp(clean_phone, data.otp_code)
+    try:
+        is_valid = await verify_login_otp(clean_phone, data.otp_code)
+    except OTPProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SMS verification is temporarily unavailable. Please try again later.",
+        ) from exc
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

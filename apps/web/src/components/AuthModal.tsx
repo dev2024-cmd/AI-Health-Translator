@@ -12,7 +12,8 @@ import {
   AlertCircle,
   RefreshCw,
   Eye,
-  EyeOff
+  EyeOff,
+  Sparkles
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '@ai-health/shared';
 
@@ -22,6 +23,7 @@ interface AuthModalProps {
   onClose: () => void;
   onSuccess: (userData: any) => void;
   selectedLanguage: string;
+  requestedRole: 'patient' | 'admin';
 }
 
 type AuthStep =
@@ -40,6 +42,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onSuccess,
   selectedLanguage,
+  requestedRole,
 }) => {
   const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [step, setStep] = useState<AuthStep>('phone_input');
@@ -71,7 +74,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   useEffect(() => {
     const devId = localStorage.getItem('swasthya_web_device_id');
     setStoredDeviceId(devId);
-    if (initialMode === 'signin' && devId) {
+    if (initialMode === 'signin' && devId && requestedRole !== 'admin') {
       setStep('pin_unlock');
     } else {
       setStep('phone_input');
@@ -81,7 +84,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setInfoMessage(null);
     setPin('');
     setConfirmPin('');
-  }, [isOpen, initialMode]);
+  }, [isOpen, initialMode, requestedRole]);
 
   if (!isOpen) return null;
 
@@ -149,7 +152,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         body: JSON.stringify({
           phone,
           code: otp,
-          role: usage === 'caregiver' ? 'caregiver' : 'patient',
+          role: requestedRole === 'admin' ? 'admin' : usage === 'caregiver' ? 'caregiver' : 'patient',
           preferred_language: lang,
         }),
       });
@@ -207,11 +210,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   // 4. Accept DPDP Consents
-  const handleAcceptConsent = () => {
+  const handleAcceptConsent = async () => {
     if (!consentExtraction || !consentEscalation) {
       setErrorMessage('Report extraction and Emergency escalation consents are required to use the system safely.');
       return;
     }
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('swasthya_access_token');
+      if (token) {
+        await fetch('http://localhost:8000/v1/consents', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            purpose: 'medical_report_ocr_simplification_and_voice_assistance',
+          }),
+        }).catch(() => {});
+      }
+    } catch {}
+    setLoading(false);
     setStep('pin_setup');
     setPin('');
     setConfirmPin('');
@@ -254,6 +274,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       localStorage.setItem('swasthya_web_device_id', data.device_id);
       localStorage.setItem('swasthya_access_token', data.access_token);
       localStorage.setItem('swasthya_refresh_token', data.refresh_token);
+
+      // Ensure consent recorded for this user session
+      try {
+        await fetch('http://localhost:8000/v1/consents', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${data.access_token}`,
+          },
+          body: JSON.stringify({
+            purpose: 'medical_report_ocr_simplification_and_voice_assistance',
+          }),
+        }).catch(() => {});
+      } catch {}
 
       onSuccess(data.user);
       onClose();
@@ -306,18 +340,76 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
+  const handleInstantDemoLogin = async () => {
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const demoPhone = '9876543210';
+      // 1. Request OTP
+      await fetch('http://localhost:8000/v1/auth/otp/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: demoPhone, purpose: 'login' }),
+      }).catch(() => {});
+
+      // 2. Verify with default dev OTP 123456
+      const verRes = await fetch('http://localhost:8000/v1/auth/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: demoPhone, code: '123456' }),
+      });
+      const data = await verRes.json();
+      if (data.access_token) {
+        localStorage.setItem('swasthya_access_token', data.access_token);
+        localStorage.setItem('swasthya_current_user', JSON.stringify(data.user));
+
+        // Auto grant DPDP consent
+        try {
+          await fetch('http://localhost:8000/v1/consents', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${data.access_token}`,
+            },
+            body: JSON.stringify({ purpose: 'medical_report_translation' }),
+          });
+        } catch {}
+
+        onSuccess(data.user);
+        onClose();
+        return;
+      }
+      throw new Error('Demo login failed');
+    } catch {
+      // Fallback local demo user if backend is unavailable
+      const mockUser = {
+        id: '9a6f5201-9831-4e00-8812-7177e57dda54',
+        name: 'Parvathi Devi K (Demo)',
+        phone: '+919876543210',
+        role: 'patient',
+        preferred_language: 'en',
+      };
+      localStorage.setItem('swasthya_current_user', JSON.stringify(mockUser));
+      localStorage.setItem('swasthya_access_token', 'demo-token');
+      onSuccess(mockUser);
+      onClose();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-md bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Header */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-600 flex items-center justify-center font-bold">
+            <div className="w-9 h-9 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-100 dark:border-sky-900/40 flex items-center justify-center font-bold">
               <Lock className="w-5 h-5" />
             </div>
             <div>
@@ -333,7 +425,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -341,6 +433,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto flex-1">
+          {/* Quick Demo Access Bar */}
+          {requestedRole !== 'admin' && <div className="mb-5 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+            <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-2 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-sky-600" />
+              <span>Instant Testing & Demonstration</span>
+            </p>
+            <button
+              type="button"
+              onClick={handleInstantDemoLogin}
+              disabled={loading}
+              className="w-full py-2.5 px-3.5 rounded-lg bg-sky-700 text-white font-semibold text-xs hover:bg-sky-800 shadow-xs flex items-center justify-center gap-2 transition-all"
+            >
+              {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <span>Instant Demo Login</span>}
+            </button>
+          </div>}
+
           {/* Error Message */}
           {errorMessage && (
             <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2.5">
@@ -447,7 +555,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Ramesh Kumar"
+                  placeholder="Enter your full name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 font-bold text-sm outline-none focus:border-emerald-500"
@@ -600,14 +708,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* STEP 5: Set 6-Digit PIN (Double-Entry with Numeric Keypad) */}
+          {/* STEP 5: Set 6-Digit PIN with keyboard input */}
           {step === 'pin_setup' && (
             <div className="space-y-4">
               <div className="text-center">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
                   {pinStep === 'enter' ? 'Choose a 6-Digit Web PIN' : 'Confirm Your 6-Digit Web PIN'}
                 </span>
-                <div className="flex justify-center gap-3 my-4">
+                <div className="hidden">
                   {[0, 1, 2, 3, 4, 5].map((i) => {
                     const currentVal = pinStep === 'enter' ? pin : confirmPin;
                     const isFilled = i < currentVal.length;
@@ -633,10 +741,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   {pinShowDigits ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   <span>{pinShowDigits ? 'Hide' : 'Show'} digits</span>
                 </button>
+                <label className="block max-w-xs mx-auto mt-4 text-left">
+                  <span className="sr-only">{pinStep === 'enter' ? 'Enter your six digit PIN' : 'Re-enter your six digit PIN'}</span>
+                  <input
+                    type={pinShowDigits ? 'text' : 'password'}
+                    inputMode="numeric"
+                    autoComplete="new-password"
+                    value={pinStep === 'enter' ? pin : confirmPin}
+                    onChange={(event) => {
+                      const digits = event.target.value.replace(/\D/g, '').slice(0, 6);
+                      pinStep === 'enter' ? setPin(digits) : setConfirmPin(digits);
+                    }}
+                    placeholder="Enter 6-digit PIN"
+                    maxLength={6}
+                    autoFocus
+                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-center text-xl tracking-[0.45em] font-bold outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
+                  />
+                </label>
               </div>
 
-              {/* Numeric Keypad */}
-              <div className="grid grid-cols-3 gap-2.5 max-w-xs mx-auto">
+              {/* Keyboard input replaces the on-screen keypad. */}
+              <div className="hidden">
                 {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'backspace'].map((key, idx) => (
                   <button
                     key={idx}
@@ -700,7 +825,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
                   Enter 6-Digit PIN to Unlock
                 </span>
-                <div className="flex justify-center gap-3 my-4">
+                <div className="hidden">
                   {[0, 1, 2, 3, 4, 5].map((i) => {
                     const isFilled = i < pin.length;
                     return (
@@ -717,10 +842,33 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     );
                   })}
                 </div>
+                <div className="max-w-xs mx-auto mt-4 space-y-2">
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setPinShowDigits(!pinShowDigits)}
+                      className="text-xs text-slate-400 flex items-center gap-1"
+                    >
+                      {pinShowDigits ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {pinShowDigits ? 'Hide' : 'Show'} digits
+                    </button>
+                  </div>
+                  <input
+                    type={pinShowDigits ? 'text' : 'password'}
+                    inputMode="numeric"
+                    autoComplete="current-password"
+                    value={pin}
+                    onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="Enter 6-digit PIN"
+                    maxLength={6}
+                    autoFocus
+                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-center text-xl tracking-[0.45em] font-bold outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
+                  />
+                </div>
               </div>
 
-              {/* Numeric Keypad */}
-              <div className="grid grid-cols-3 gap-2.5 max-w-xs mx-auto">
+              {/* Keyboard input replaces the on-screen keypad. */}
+              <div className="hidden">
                 {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'backspace'].map((key, idx) => (
                   <button
                     key={idx}

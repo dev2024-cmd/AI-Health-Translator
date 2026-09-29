@@ -16,7 +16,9 @@ def get_storage_service() -> BaseStorageService:
         return _storage_instance
 
     try:
-        _storage_instance = S3StorageService()
+        s3 = S3StorageService()
+        s3.client.head_bucket(Bucket=s3.bucket_name)
+        _storage_instance = s3
         return _storage_instance
     except Exception:
         _storage_instance = LocalStorageService()

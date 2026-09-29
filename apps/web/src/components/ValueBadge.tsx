@@ -12,10 +12,10 @@ export const ValueBadge: React.FC<ValueBadgeProps> = ({ flag, showIconOnly = fal
     case 'normal':
       return (
         <span
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300"
-          title="Normal: Value is within the healthy reference range"
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200"
+          title="Normal: Value is within reference limits"
         >
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+          <CheckCircle2 className="w-3 h-3 text-emerald-600 flex-shrink-0" />
           {!showIconOnly && <span>Normal</span>}
         </span>
       );
@@ -23,10 +23,10 @@ export const ValueBadge: React.FC<ValueBadgeProps> = ({ flag, showIconOnly = fal
     case 'low':
       return (
         <span
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300"
-          title="Low: Value is below normal limits. Discuss with your doctor."
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200"
+          title="Low: Below normal reference limits"
         >
-          <ArrowDownCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+          <ArrowDownCircle className="w-3 h-3 text-amber-600 flex-shrink-0" />
           {!showIconOnly && <span>Low</span>}
         </span>
       );
@@ -34,10 +34,10 @@ export const ValueBadge: React.FC<ValueBadgeProps> = ({ flag, showIconOnly = fal
     case 'high':
       return (
         <span
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-900 border border-orange-300"
-          title="High: Value is above normal limits. Discuss with your doctor."
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-orange-50 text-orange-800 border border-orange-200"
+          title="High: Above normal reference limits"
         >
-          <ArrowUpCircle className="w-3.5 h-3.5 text-orange-600 flex-shrink-0" />
+          <ArrowUpCircle className="w-3 h-3 text-orange-600 flex-shrink-0" />
           {!showIconOnly && <span>High</span>}
         </span>
       );
@@ -45,11 +45,11 @@ export const ValueBadge: React.FC<ValueBadgeProps> = ({ flag, showIconOnly = fal
     case 'critical':
       return (
         <span
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-900 border border-red-400 animate-pulse"
-          title="See Doctor: Prompt medical consultation required"
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-red-50 text-red-800 border border-red-200"
+          title="Critical: Clinical attention recommended"
         >
-          <AlertOctagon className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
-          {!showIconOnly && <span>Consult Doctor</span>}
+          <AlertOctagon className="w-3 h-3 text-red-600 flex-shrink-0" />
+          {!showIconOnly && <span>Doctor Review</span>}
         </span>
       );
 

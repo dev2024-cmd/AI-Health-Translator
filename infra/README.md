@@ -72,6 +72,30 @@ docker compose -f infra/docker-compose.yml exec api python -m seed.seed_db
 | `S3_BUCKET_NAME` | `medical-reports` | Default S3 bucket for reports & audio |
 | `JWT_SECRET_KEY` | `dev_jwt_secret...` | Secret key for signing JWT tokens |
 | `OTP_DEV_MODE` | `true` | When true, returns `123456` OTP for local development |
+| `OTP_PROVIDER` | `mock` | Set to `twilio_verify` to send and verify actual login SMS messages |
+
+### Real login SMS with Twilio Verify
+
+For real messages, create a Twilio Verify service, then set these values in the
+environment file used to start the API (for Docker Compose, use `infra/.env`):
+
+```env
+OTP_DEV_MODE=false
+OTP_PROVIDER=twilio_verify
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_VERIFY_SERVICE_SID=VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Restart the API after changing the values. The normal Twilio Verify trial and
+India sender/recipient restrictions still apply; complete the required Twilio
+and Indian DLT registration before testing with an unverified Indian number.
+
+### First administrator account
+
+Set `BOOTSTRAP_ADMIN_PHONE` to your own E.164 phone number before the first
+administrator OTP sign-in. Then use **Admin access** on the web landing page
+and verify that number. Other phone numbers cannot self-register as admins.
 | `MOCK_PROVIDERS` | `true` | Allows full end-to-end pipeline execution without external API keys |
 | `OCR_PROVIDER` | `mock` | OCR engine (`mock`, `tesseract`, `google_vision`, `azure_doc_intelligence`) |
 | `TRANSLATION_PROVIDER` | `mock` | Translation engine (`mock`, `bhashini`, `indictrans2`) |

@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     OTP_DEFAULT_CODE: str = "123456"
     OTP_EXPIRY_SECONDS: int = 300
     MAX_OTP_ATTEMPTS: int = 5
+    # OTP delivery: mock (local code) | twilio_verify (real SMS)
+    OTP_PROVIDER: str = "mock"
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_VERIFY_SERVICE_SID: str = ""
+
+    # The one phone number allowed to bootstrap the first administrator account.
+    # Leave empty to disable self-service admin enrollment.
+    BOOTSTRAP_ADMIN_PHONE: str = ""
 
     # AI Pipeline Swappable Flags
     MOCK_PROVIDERS: bool = True

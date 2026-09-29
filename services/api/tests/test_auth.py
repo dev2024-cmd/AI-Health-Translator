@@ -1,5 +1,7 @@
 import pytest
 from httpx import AsyncClient
+from app.api.v1 import auth
+from app.core.config import settings
 from app.core.security import sanitize_phone, mask_phone
 
 
@@ -37,6 +39,48 @@ async def test_otp_request_invalid_phone(client: AsyncClient):
         json={"phone": "123"},
     )
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_live_twilio_otp_flow_does_not_return_code(client: AsyncClient, monkeypatch):
+    sent_to = []
+
+    async def fake_send_code(self, phone: str):
+        sent_to.append(phone)
+
+    async def fake_check_code(self, phone: str, code: str):
+        return phone == "+919812345670" and code == "654321"
+
+    monkeypatch.setattr(auth.settings, "OTP_DEV_MODE", False)
+    monkeypatch.setattr(auth.settings, "OTP_PROVIDER", "twilio_verify")
+    monkeypatch.setattr(auth.TwilioVerifyProvider, "send_code", fake_send_code)
+    monkeypatch.setattr(auth.TwilioVerifyProvider, "check_code", fake_check_code)
+
+    request = await client.post("/v1/auth/otp/request", json={"phone": "9812345670"})
+    assert request.status_code == 200
+    assert request.json()["dev_otp"] is None
+    assert sent_to == ["+919812345670"]
+
+    verification = await client.post(
+        "/v1/auth/otp/verify",
+        json={"phone": "9812345670", "code": "654321"},
+    )
+    assert verification.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_only_configured_phone_can_bootstrap_admin(client: AsyncClient, monkeypatch):
+    phone = "9812345671"
+    monkeypatch.setattr(settings, "BOOTSTRAP_ADMIN_PHONE", "+919812345671")
+
+    requested = await client.post("/v1/auth/otp/request", json={"phone": phone})
+    verified = await client.post(
+        "/v1/auth/otp/verify",
+        json={"phone": phone, "code": requested.json()["dev_otp"], "role": "admin"},
+    )
+
+    assert verified.status_code == 200
+    assert verified.json()["user"]["role"] == "admin"
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,8 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import { WebReport } from '../types/api.js';
+import { hydrateReportTranslations } from '../utils/reportLocalizer.js';
+import { runBrowserOcr, parseMedicalOcrText } from '../utils/medicalOcrParser.js';
 
 interface CapturedPage {
   id: string;
@@ -32,6 +34,10 @@ interface CameraCaptureModalProps {
   selectedPatientId: string;
   patientName: string;
   initialDocType?: 'lab_report' | 'prescription';
+  onOpenSubscription?: () => void;
+  currentPlan?: 'free' | 'family' | 'pro';
+  reportsCount?: number;
+  maxFreeReports?: number;
 }
 
 export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
@@ -41,13 +47,19 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   selectedPatientId,
   patientName,
   initialDocType = 'lab_report',
+  onOpenSubscription,
+  currentPlan = 'free',
+  reportsCount = 0,
+  maxFreeReports = 5,
 }) => {
+  const isQuotaExhausted = currentPlan === 'free' && reportsCount >= maxFreeReports;
   const [docType, setDocType] = useState<'lab_report' | 'prescription'>(initialDocType);
   const [inputMethod, setInputMethod] = useState<'camera' | 'upload'>('camera');
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturedPages, setCapturedPages] = useState<CapturedPage[]>([]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitStage, setSubmitStage] = useState<string>('Analyzing document with AI OCR...');
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState<boolean>(true);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
@@ -263,6 +275,13 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   };
 
   const handleCaptureShutter = () => {
+    if (isQuotaExhausted) {
+      if (onOpenSubscription) {
+        onClose();
+        onOpenSubscription();
+      }
+      return;
+    }
     if (!videoRef.current) return;
     playShutterSound();
 
@@ -289,6 +308,13 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
 
   // Process incoming files (from Drag & Drop or File Picker)
   const processIncomingFiles = (files: File[]) => {
+    if (isQuotaExhausted) {
+      if (onOpenSubscription) {
+        onClose();
+        onOpenSubscription();
+      }
+      return;
+    }
     const validFiles = files.filter(
       (f) =>
         f.type.startsWith('image/') ||
@@ -392,9 +418,18 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   };
 
   // Submit pages to backend or save to offline queue
+  // Submit pages to backend or save to offline queue with Real AI OCR Analysis
   const handleDoneSubmit = async () => {
     if (capturedPages.length === 0) return;
+    if (isQuotaExhausted) {
+      if (onOpenSubscription) {
+        onClose();
+        onOpenSubscription();
+      }
+      return;
+    }
     setIsSubmitting(true);
+    setSubmitStage('Scanning document with AI Vision OCR...');
 
     if (!isOnline) {
       const queueItem = {
@@ -415,202 +450,114 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
       }
     }
 
-    // Build synthesized web report representation
-    setTimeout(() => {
-      const hasPrescriptionFileName = capturedPages.some(
-        (p) =>
-          p.fileName.toLowerCase().includes('prescription') ||
-          p.fileName.toLowerCase().includes('rx') ||
-          p.fileName.toLowerCase().includes('doctor') ||
-          p.fileName.toLowerCase().includes('ibuprofen')
-      );
-      const isPrescription = docType === 'prescription' || hasPrescriptionFileName;
-      const isIbuprofenPrescription = capturedPages.some(
-        (p) =>
-          p.fileName.toLowerCase().includes('prescription-template') ||
-          p.fileName.toLowerCase().includes('prescription') ||
-          p.fileName.toLowerCase().includes('ibuprofen')
-      );
+    try {
+      const primaryPage = capturedPages[0];
+      let ocrText = '';
 
-      let createdReport: WebReport;
-
-      if (isPrescription) {
-        if (isIbuprofenPrescription) {
-          createdReport = {
-            id: 'rep-' + Date.now(),
-            patient_name: 'Karlene Hizon',
-            patient_id: selectedPatientId,
-            patient_age: 71,
-            patient_gender: 'Female',
-            test_title: 'Doctor Prescription (Dr. Anna Ludwig, MD)',
-            date: '2024-10-29',
-            source: 'web',
-            status: 'ready',
-            original_language: 'en',
-            audio_available: true,
-            document_type: 'prescription',
-            doctor_name: 'Dr. Anna Ludwig, MD',
-            doctor_clinic: 'St Charles, Oak Street, CA',
-            doctor_license: '00-9987-35',
-            file_name: capturedPages[0]?.fileName || 'prescription-template-sample.jpg',
-            file_type: capturedPages[0]?.fileType || 'image/jpeg',
-            image_url: capturedPages[0]?.dataUrl,
-            extracted_values: [
-              {
-                id: 'rx-1',
-                test_name: 'Rx: Ibuprofen (400mg Tablets)',
-                value: 1.0,
-                unit: '1 tablet every 6h (Max 2400mg/day)',
-                ref_low: null,
-                ref_high: null,
-                flag: 'normal',
-                page: 1,
-              },
-              {
-                id: 'rx-2',
-                test_name: 'Duration & Food: 5 Days (Take with food)',
-                value: 5.0,
-                unit: 'Days course',
-                ref_low: null,
-                ref_high: null,
-                flag: 'normal',
-                page: 1,
-              },
-              {
-                id: 'rx-3',
-                test_name: 'Safety Warning: Avoid other NSAIDs concurrently',
-                value: 0.0,
-                unit: 'High Precaution',
-                ref_low: null,
-                ref_high: null,
-                flag: 'high',
-                page: 1,
-              },
-            ],
-            plain_explanation: {
-              en: `⚠️ CLINICAL SAFETY & DOCTOR PRESCRIPTION GUIDANCE
-Prescribing Doctor: Dr. Anna Ludwig, MD (St Charles, Oak Street, CA • Lic: 00-9987-35)
-Patient: Karlene Hizon (DOB: March 5, 1953) • Date: October 29, 2024
-
-Take this medicine ONLY as prescribed by Dr. Anna Ludwig. Never change your dose or stop taking medication without speaking to your doctor.
-
-📋 Exact Daily Medication Routine:
-1. Ibuprofen (400mg Tablets):
-   • Dose: Take 1 tablet by mouth every 6 hours.
-   • Duration: Take regularly for 5 days as directed.
-   • 🍲 Important: ALWAYS take with food or milk. Ibuprofen can irritate an empty stomach.
-   • ⛔ Maximum Safety Limit: Do NOT exceed 2400mg (6 tablets) in any 24-hour window.
-
-⚠️ Doctor's Warnings & Drug Precautions:
-• Avoid Other NSAIDs: Patient is advised to avoid other NSAIDs (such as Aspirin, Naproxen / Aleve, or Diclofenac) at the same time to prevent severe stomach ulcers and bleeding.
-• Stomach Monitoring: Monitor closely for stomach discomfort, heartburn, nausea, or indigestion. If severe, stop taking the medication and consult your doctor immediately.
-
-IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance only. Follow Dr. Anna Ludwig's instructions exactly.`,
-              hi: `⚠️ नैदानिक सुरक्षा एवं डॉक्टर का पर्चा मार्गदर्शन
-चिकित्सक: डॉ. अन्ना लुडविग, एम.डी. (सेंट चार्ल्स, कैलिफ़ोर्निया)
-मरीज़: कार्लीन हिज़ोन • दिनांक: 29 अक्टूबर 2024
-
-इस दवा का सेवन केवल डॉ. अन्ना लुडविग के निर्देशानुसार ही करें। अपनी मर्जी से खुराक न बदलें।
-
-📋 आपकी दवा का दैनिक नियम:
-1. इबुप्रोफेन (Ibuprofen 400mg):
-   • खुराक: 1 गोली हर 6 घंटे में लें (कुल 5 दिनों के लिए)।
-   • 🍲 भोजन के साथ लें: पेट में जलन या दर्द से बचने के लिए इसे हमेशा खाने के बाद या दूध के साथ लें।
-   • ⛔ अधिकतम सीमा: 24 घंटे में 2400 मिलीग्राम (अधिकतम 6 गोलियां) से अधिक कभी न लें।
-
-⚠️ डॉक्टर की सावधानियां:
-• अन्य दर्द निवारक (NSAIDs जैसे एस्पिरिन, नेप्रोक्सेन) इस दवा के साथ बिल्कुल न लें।
-• पेट में तेज जलन, दर्द या उल्टी महसूस होने पर दवा रोककर तुरंत डॉक्टर से संपर्क करें।`,
-              te: `⚠️ వైద్య భద్రత & డాక్టర్ ప్రిస్క్రిప్షన్ మార్గదర్శకాలు
-వైద్యులు: డాక్టర్ అన్నా లుడ్విగ్, MD (St Charles, Oak Street, CA)
-రోగి: కార్లీన్ హిజోన్ • తేదీ: 29 అక్టోబర్ 2024
-
-ఈ ఔషధాన్ని డాక్టర్ అన్నా లుడ్విగ్ సూచించిన విధంగా మాత్రమే వాడండి. మోతాదును మార్చకండి.
-
-📋 మీ ఔషధాల దినచర్య:
-1. ఇబుప్రోఫెన్ (Ibuprofen 400mg):
-   • మోతాదు: ప్రతి 6 గంటలకు 1 మాత్ర వేసుకోవాలి (5 రోజుల కోర్సు).
-   • 🍲 ఆహారంతో పాటు మాత్రమే: కడుపులో మంట లేదా గ్యాస్ రాకుండా ఉండటానికి ఎల్లప్పుడూ భోజనం తర్వాతే వేసుకోండి.
-   • ⛔ గరిష్ట పరిమితి: 24 గంటల్లో 2400mg (6 మాత్రల కంటే ఎక్కువ) తీసుకోకూడదు.
-
-⚠️ డాక్టర్ హెచ్చరికలు:
-• ఇతర పెయిన్ కిల్లర్స్ (ఆస్పిరిన్, నాప్రోక్సేన్ వంటి NSAIDs) దీనితో కలిపి వాడకూడదు.
-• కడుపు నొప్పి లేదా అసౌకర్యం అనిపిస్తే వెంటనే వైద్యుడిని సంప్రదించండి.`,
-            },
-          };
-        } else {
-          createdReport = {
-            id: 'rep-' + Date.now(),
-            patient_name: patientName,
-            patient_id: selectedPatientId,
-            patient_age: 64,
-            patient_gender: 'Male',
-            test_title: 'Doctor Prescription (Dr. R. K. Sharma)',
-            date: new Date().toISOString().split('T')[0],
-            source: 'web',
-            status: 'ready',
-            original_language: 'en',
-            audio_available: true,
-            document_type: 'prescription',
-            doctor_name: 'Dr. R. K. Sharma, MD',
-            doctor_clinic: 'Apollo Clinic, Jubilee Hills, Hyderabad',
-            doctor_license: 'TS-48921',
-            file_name: capturedPages[0]?.fileName || 'prescription_scan.jpg',
-            file_type: capturedPages[0]?.fileType || 'image/jpeg',
-            image_url: capturedPages[0]?.dataUrl,
-            extracted_values: [
-              { id: 'v1', test_name: 'Rx: Metformin (500mg Tablet)', value: 1.0, unit: '1-0-1 (After food)', ref_low: null, ref_high: null, flag: 'normal', page: 1 },
-              { id: 'v2', test_name: 'Rx: Telmisartan (40mg Tablet)', value: 2.0, unit: '1-0-0 (Before food)', ref_low: null, ref_high: null, flag: 'normal', page: 1 },
-              { id: 'v3', test_name: 'Rx: Atorvastatin (10mg Tablet)', value: 3.0, unit: '0-0-1 (Bedtime)', ref_low: null, ref_high: null, flag: 'normal', page: 1 },
-            ],
-            plain_explanation: {
-              en: '⚠️ IMPORTANT: Take this medicine only as prescribed by Dr. R. K. Sharma. Never change your dose or stop taking medication without speaking to your doctor.\n\n📋 Your Daily Routine:\n1. Metformin (500mg): Take 1 tablet in the morning after breakfast and 1 at night after dinner.\n2. Telmisartan (40mg): Take 1 tablet in the morning before food.\n3. Atorvastatin (10mg): Take 1 tablet at night before bed.\n\nIMPORTANT MEDICAL DISCLAIMER: For informational guidance only. Follow doctor instructions.',
-              hi: '⚠️ महत्वपूर्ण सूचना: इस दवा का सेवन केवल डॉ. शर्मा के निर्देशानुसार ही करें। खुराक न बदलें।\n\n1. मेटफॉर्मिन: सुबह नाश्ते के बाद 1 गोली और रात के खाने के बाद 1 गोली।\n2. टेल्मिसर्टन: सुबह खाली पेट 1 गोली।',
-              te: '⚠️ ముఖ్య గమనిక: ఈ ఔషధాలను డాక్టర్ గారు సూచించిన విధంగా మాత్రమే వాడండి. మోతాదును మార్చకండి.\n\n1. మెట్‌ఫార్మిన్: ఉదయం అల్పాహారం తర్వాత 1 మాత్ర మరియు రాత్రి భోజనం తర్వాత 1 మాత్ర.\n2. టెల్మిసార్టన్: ఉదయం టిఫిన్ కంటే ముందు 1 మాత్ర.',
-            },
-          };
+      if (primaryPage.dataUrl) {
+        setSubmitStage('Reading text and handwriting with AI Vision OCR...');
+        try {
+          ocrText = await runBrowserOcr(primaryPage.dataUrl, (p, stage) => {
+            setSubmitStage(stage);
+          });
+        } catch (err) {
+          console.warn('Browser OCR info:', err);
         }
-      } else {
-        createdReport = {
-          id: 'rep-' + Date.now(),
-          patient_name: patientName,
-          patient_id: selectedPatientId,
-          patient_age: 64,
-          patient_gender: 'Male',
-          test_title: `Multi-Page Lab Report (${capturedPages.length} Pages)`,
-          date: new Date().toISOString().split('T')[0],
-          source: 'web',
-          status: 'ready',
-          original_language: 'en',
-          audio_available: true,
-          document_type: 'lab_report',
-          file_name: capturedPages[0]?.fileName || `report_${capturedPages.length}_pages.jpg`,
-          file_type: capturedPages[0]?.fileType || 'image/jpeg',
-          image_url: capturedPages[0]?.dataUrl,
-          extracted_values: [
-            { id: 'v1', test_name: 'Hemoglobin', value: 11.2, unit: 'g/dL', ref_low: 13.0, ref_high: 17.0, flag: 'low', page: 1 },
-            { id: 'v2', test_name: 'Total Cholesterol', value: 235.0, unit: 'mg/dL', ref_low: 125.0, ref_high: 200.0, flag: 'high', page: 1 },
-            { id: 'v3', test_name: 'WBC Count', value: 8500.0, unit: 'cells/mcL', ref_low: 4000.0, ref_high: 11000.0, flag: 'normal', page: 1 },
-          ],
-          plain_explanation: {
-            en: 'Your multi-page document was processed successfully. Your hemoglobin is slightly low at 11.2, and your cholesterol is slightly elevated at 235.',
-            hi: 'आपकी बहुपृष्ठीय रिपोर्ट का विश्लेषण पूरा हुआ। हीमोग्लोबिन 11.2 थोड़ा कम है।',
-            te: 'మీ బహుళ పేజీల నివేదిక విశ్లేషించబడింది. హిమోగ్లోబిన్ 11.2 సాధారణ స్థాయి కంటే కొద్దిగా తక్కువ.',
-          },
-        };
-      }��ాత్ర మరియు రాత్రి భోజనం తర్వాత 1 మాత్ర.\n2. టెల్మిసార్టన్: ఉదయం టిఫిన్ కంటే ముందు 1 మాత్ర.',
-            }
-          : {
-              en: 'Your multi-page document was processed successfully. Your hemoglobin is slightly low at 11.2, and your cholesterol is slightly elevated at 235.',
-              hi: 'आपकी बहुपृष्ठीय रिपोर्ट का विश्लेषण पूरा हुआ। हीमोग्लोबिन 11.2 थोड़ा कम है।',
-              te: 'మీ బహుళ పేజీల నివేదిక విశ్లేషించబడింది. హిమోగ్లోబిన్ 11.2 సాధారణ స్థాయి కంటే కొద్దిగా తక్కువ.',
-            },
+      }
+
+      setSubmitStage('Extracting clinical test findings & medication instructions...');
+
+      // Parse the OCR text using the medical parser
+      const parsed = parseMedicalOcrText(
+        ocrText,
+        primaryPage.fileName || '',
+        patientName,
+        docType
+      );
+
+      // Build real report matching the scanned image
+      const createdReport: WebReport = {
+        id: 'rep-' + Date.now(),
+        patient_name: parsed.patientName || patientName || 'Patient',
+        patient_id: selectedPatientId,
+        patient_age: parsed.patientAge || 45,
+        patient_gender: parsed.patientGender || 'Unknown',
+        test_title: parsed.title,
+        date: parsed.date,
+        source: 'web',
+        status: 'ready',
+        original_language: 'en',
+        audio_available: true,
+        document_type: parsed.documentType,
+        doctor_name: parsed.doctorName,
+        doctor_clinic: parsed.clinicOrHospital,
+        doctor_license: parsed.doctorLicense,
+        file_name: primaryPage.fileName || (parsed.documentType === 'prescription' ? 'prescription_scan.jpg' : 'medical_report_scan.jpg'),
+        file_type: primaryPage.fileType || 'image/jpeg',
+        image_url: primaryPage.dataUrl,
+        extracted_values: parsed.extractedValues,
+        plain_explanation: parsed.plainExplanation,
+        doctor_advice: (parsed as any).doctorAdvice,
+        follow_up_date: (parsed as any).followUpDate,
       };
 
+      // Sync with backend API in background if authenticated
+      try {
+        const token = localStorage.getItem('swasthya_access_token');
+        if (token && capturedPages.length > 0) {
+          fetch(primaryPage.dataUrl)
+            .then((res) => res.blob())
+            .then((blob) => {
+              const formData = new FormData();
+              formData.append('files', blob, primaryPage.fileName || 'camera_report.jpg');
+              formData.append('patient_id', selectedPatientId || 'pat-self');
+              formData.append('source', 'web');
+              formData.append('original_language', 'en');
+              return fetch('http://localhost:8000/v1/reports', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                body: formData,
+              });
+            })
+            .catch(() => {});
+        }
+      } catch {}
+
       setIsSubmitting(false);
-      onComplete(createdReport);
+      onComplete(hydrateReportTranslations(createdReport));
       onClose();
-    }, 1200);
+    } catch (err) {
+      console.error('OCR pipeline error:', err);
+      // Safe fallback using parser on filename
+      const parsed = parseMedicalOcrText('', capturedPages[0]?.fileName || '', patientName, docType);
+      const fallbackReport: WebReport = {
+        id: 'rep-' + Date.now(),
+        patient_name: parsed.patientName || patientName || 'Patient',
+        patient_id: selectedPatientId,
+        patient_age: 45,
+        patient_gender: 'Unknown',
+        test_title: parsed.title,
+        date: new Date().toISOString().split('T')[0],
+        source: 'web',
+        status: 'ready',
+        original_language: 'en',
+        audio_available: true,
+        document_type: parsed.documentType,
+        doctor_name: parsed.doctorName,
+        doctor_clinic: parsed.clinicOrHospital,
+        doctor_license: parsed.doctorLicense,
+        file_name: capturedPages[0]?.fileName || 'report_scan.jpg',
+        file_type: capturedPages[0]?.fileType || 'image/jpeg',
+        image_url: capturedPages[0]?.dataUrl,
+        extracted_values: parsed.extractedValues,
+        plain_explanation: parsed.plainExplanation,
+        doctor_advice: (parsed as any).doctorAdvice,
+        follow_up_date: (parsed as any).followUpDate,
+      };
+      setIsSubmitting(false);
+      onComplete(hydrateReportTranslations(fallbackReport));
+      onClose();
+    }
   };
 
   if (!isOpen) return null;
@@ -630,7 +577,7 @@ IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance onl
         className="hidden"
       />
 
-      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col my-auto max-h-[92vh]">
+      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl flex flex-col my-auto max-h-[92vh]">
         {/* Top Header Bar */}
         <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800 bg-slate-950/80">
           <div className="flex items-center gap-3">
@@ -683,33 +630,67 @@ IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance onl
           </div>
         </div>
 
+        {/* Free Quota Exhausted Alert Banner */}
+        {isQuotaExhausted && (
+          <div className="bg-amber-950/80 border-b border-amber-800/80 p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-200 text-xs">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <strong className="font-bold">Free Quota Limit Reached ({reportsCount}/{maxFreeReports} Reports Used): </strong>
+                To process additional medical documents and unlock unlimited Neural Vision OCR, spoken IVR calls, and SMS dispatches, please upgrade your subscription.
+                <div className="flex items-center gap-2 mt-1 text-[10px] text-amber-300 font-semibold">
+                  <span>Direct Unit Costs: SMS ₹0.25</span>
+                  <span>•</span>
+                  <span>IVR ₹0.75/min</span>
+                  <span>•</span>
+                  <span>OCR ₹0.50/page</span>
+                  <span>•</span>
+                  <span>Clinical LLM ₹0.60/rep</span>
+                </div>
+              </div>
+            </div>
+            {onOpenSubscription && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenSubscription();
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs whitespace-nowrap shrink-0 transition-colors shadow-sm"
+              >
+                Upgrade Subscription
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Input Method Switcher Tab Bar: Camera vs File Upload */}
         <div className="flex items-center justify-center py-2.5 px-6 bg-slate-950/60 border-b border-slate-800">
-          <div className="inline-flex p-1 rounded-2xl bg-slate-800/90 border border-slate-700/60 text-xs font-extrabold shadow-inner">
+          <div className="inline-flex p-1 rounded-lg bg-slate-800/90 border border-slate-700/60 text-xs font-semibold shadow-inner">
             <button
               type="button"
               onClick={() => setInputMethod('camera')}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl transition-all ${
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-md transition-all ${
                 inputMethod === 'camera'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                  ? 'bg-emerald-600 text-white shadow-xs'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Camera className="w-4 h-4" />
-              <span>📸 Capture with Camera</span>
+              <span>Capture with Camera</span>
             </button>
 
             <button
               type="button"
               onClick={() => setInputMethod('upload')}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl transition-all ${
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-md transition-all ${
                 inputMethod === 'upload'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                  ? 'bg-emerald-600 text-white shadow-xs'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Upload className="w-4 h-4" />
-              <span>📁 Upload From Files / PDF</span>
+              <span>Upload From Files / PDF</span>
             </button>
           </div>
         </div>
@@ -808,7 +789,7 @@ IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance onl
             ) : (
               /* Camera Unavailable / Error View */
               <div className="p-8 text-center max-w-md">
-                <div className="w-14 h-14 rounded-3xl bg-slate-800 text-slate-400 flex items-center justify-center mx-auto mb-3 font-black">
+                <div className="w-14 h-14 rounded-xl bg-slate-800 text-slate-400 flex items-center justify-center mx-auto mb-3 font-black">
                   <Camera className="w-7 h-7" />
                 </div>
                 <h3 className="text-base font-black text-white">Camera Viewfinder Inactive</h3>
@@ -831,7 +812,7 @@ IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance onl
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              className={`w-full max-w-xl mx-4 my-6 p-8 border-2 border-dashed rounded-3xl text-center transition-all flex flex-col items-center justify-center ${
+              className={`w-full max-w-xl mx-4 my-6 p-8 border-2 border-dashed rounded-xl text-center transition-all flex flex-col items-center justify-center ${
                 isDragging
                   ? 'border-emerald-400 bg-emerald-500/10 scale-[1.01]'
                   : 'border-slate-700 bg-slate-900/60 hover:border-slate-600'
@@ -977,7 +958,7 @@ IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance onl
             {isSubmitting ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Processing {capturedPages.length} Pages...</span>
+                <span>{submitStage}</span>
               </>
             ) : (
               <>

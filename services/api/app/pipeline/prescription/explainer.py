@@ -54,9 +54,15 @@ def generate_prescription_explanation(
     med_lines = []
     for idx, med in enumerate(data.medications, 1):
         line = f"{idx}. {med.name} ({med.form}, {med.strength or 'as prescribed'}):"
-        line += f"\n   • Schedule: {med.daily_schedule}"
+        if med.what_it_is:
+            line += f"\n   • 💊 What the tablet is: {med.what_it_is}"
+        if med.what_it_is_for:
+            line += f"\n   • 🎯 What it is for: {med.what_it_is_for}"
+        if med.what_it_will_do:
+            line += f"\n   • ⚡ What will it do: {med.what_it_will_do}"
+        line += f"\n   • ⏰ How & when to take: {med.daily_schedule}"
         if med.duration:
-            line += f"\n   • Duration: {med.duration}"
+            line += f" ({med.duration})"
         if med.special_instructions:
             line += f"\n   • Instruction: {med.special_instructions}"
         med_lines.append(line)

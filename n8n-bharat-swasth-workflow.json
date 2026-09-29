@@ -1,0 +1,327 @@
+{
+  "name": "Bharat Swasth - Automated Lab Email Ingestion & Web App Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "maxResults": 1,
+        "filters": {
+          "q": "has:attachment (subject:(report OR lab OR diagnostic OR prescription OR test) OR from:parvathidevi628202@gmail.com)"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        48,
+        32
+      ],
+      "id": "7d5ff8c1-0a86-4db6-9fc9-42ca45ec3fe2",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "XuOALI3cK9cSnQeU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c3b70366-5027-4423-85a0-d35459745898",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "name": "filter.operator.notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        32
+      ],
+      "id": "aaec8f6c-3b5a-4039-aeb8-a44443a56d12",
+      "name": "Check Message Exists"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "simple": false,
+        "options": {
+          "dataPropertyAttachmentsPrefixName": "attachment_",
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        -96
+      ],
+      "id": "9c9ae480-bd73-4821-a6f6-38dd63e93c03",
+      "name": "Get a message",
+      "webhookId": "0d9b7c46-37d4-42ce-8512-9c796347f13d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "XuOALI3cK9cSnQeU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.0-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.0-flash"
+        },
+        "text": "Analyze this medical document.\n\nFirst identify whether this is a prescription or a laboratory report.\n\nIf it is a prescription, extract:\n- patient_name\n- doctor_name\n- clinic_or_hospital\n- medicines: list of { medicine_name, dosage, frequency, duration, special_instructions }\n\nIf it is a laboratory report, extract:\n- patient_name\n- doctor_name\n- lab_name\n- extracted_values: list of { test_name, value, unit, ref_low, ref_high, flag (normal/low/high/critical) }\n\nReturn strictly valid JSON only without markdown fences:\n{\n  \"document_type\": \"lab_report\" | \"prescription\",\n  \"patient_name\": \"...\",\n  \"doctor_name\": \"...\",\n  \"clinic_or_hospital\": \"...\",\n  \"medicines\": [...],\n  \"extracted_values\": [...]\n}\nDo not invent or guess missing information.\nIf a value is unreadable, return \"unreadable\".",
+        "inputType": "binary",
+        "binaryPropertyName": "attachment_0",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "f3fdfb72-c08e-4745-a9d0-349ebe069be6",
+      "name": "Analyze with Gemini Vision",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "GVhGLhlnuwEI8GRy",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let rawText = '';\nif ($json.content?.parts?.[0]?.text) {\n  rawText = $json.content.parts[0].text;\n} else if ($json.text) {\n  rawText = $json.text;\n} else {\n  rawText = JSON.stringify($json);\n}\n\nconst cleaned = rawText\n  .replace(/```json/gi, '')\n  .replace(/```/g, '')\n  .trim();\n\nlet data = {};\ntry {\n  data = JSON.parse(cleaned);\n} catch (err) {\n  data = {\n    document_type: 'lab_report',\n    patient_name: 'Patient',\n    extracted_values: []\n  };\n}\n\nreturn [\n  {\n    json: data\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -96
+      ],
+      "id": "caa0fdb9-8817-4e0a-a9b2-1211f887418d",
+      "name": "Parse Cleaned JSON"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.0-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.0-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an empathetic medical translation assistant for Bharat Swasth.\n\nUse ONLY the structured medical data below.\n\nExplain the document in simple, reassuring Grade-5 language suitable for patients and elders.\n\nInclude:\n- Patient name and doctor/lab\n- Clear summary of normal and flagged parameters\n- Specific instructions and precautions\n- Reminder schedule\n\nDo not invent medical facts.\nDo not change prescribed dosages.\nDo not diagnose new illnesses.\n\nAlways conclude with this exact disclaimer:\n\"This AI-generated explanation is for informational purposes only under India's DPDP Act 2023 and is not a medical diagnosis. Please consult a qualified doctor before altering medication.\"\n\nStructured medical data:\n{{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "jsonOutput": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        -96
+      ],
+      "id": "feb41f00-7bd3-4ebd-93bc-1d1a2dd044e2",
+      "name": "Generate Grade-5 Explanation",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "GVhGLhlnuwEI8GRy",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Get a message').first().json.to?.value?.[0]?.address || 'ananthima271710@gmail.com' }}",
+        "subject": "=Bharat Swasth • Your Medical Report Explanation ({{ $('Parse Cleaned JSON').first().json.patient_name || 'Patient' }})",
+        "message": "={{ $json.content?.parts?.[0]?.text || $json.text }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1400,
+        -180
+      ],
+      "id": "489d6da1-21b0-4096-bc1f-6942d1c1bebb",
+      "name": "Send Email to Patient",
+      "webhookId": "f230e04a-baec-4e50-9713-aabcf180adbf",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "XuOALI3cK9cSnQeU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/v1/reports/webhook/n8n",
+        "sendBinaryData": true,
+        "binaryPropertyName": "attachment_0",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "patient_email",
+              "value": "={{ $('Get a message').first().json.to?.value?.[0]?.address || 'ananthima271710@gmail.com' }}"
+            },
+            {
+              "name": "patient_phone",
+              "value": "+91 96666 66666"
+            },
+            {
+              "name": "lab_name",
+              "value": "={{ $('Get a message').first().json.from?.value?.[0]?.name || 'Diagnostic Lab' }}"
+            },
+            {
+              "name": "doctor_name",
+              "value": "={{ $('Parse Cleaned JSON').first().json.doctor_name || '' }}"
+            },
+            {
+              "name": "gemini_summary",
+              "value": "={{ $json.content?.parts?.[0]?.text || $json.text }}"
+            },
+            {
+              "name": "gemini_extracted_json",
+              "value": "={{ JSON.stringify($('Parse Cleaned JSON').first().json) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        48
+      ],
+      "id": "0cb36bd4-3d90-48b1-a2b6-0bfd6bec998c",
+      "name": "Upload to Bharat Swasth Web App"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Message Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Message Exists": {
+      "main": [
+        [
+          {
+            "node": "Get a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a message": {
+      "main": [
+        [
+          {
+            "node": "Analyze with Gemini Vision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze with Gemini Vision": {
+      "main": [
+        [
+          {
+            "node": "Parse Cleaned JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Cleaned JSON": {
+      "main": [
+        [
+          {
+            "node": "Generate Grade-5 Explanation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Grade-5 Explanation": {
+      "main": [
+        [
+          {
+            "node": "Send Email to Patient",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upload to Bharat Swasth Web App",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7ff7643b-bc12-413e-bbb3-96540ad0dddf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "12b8f7fcc3ba136c9976de81c0626f48db6605c69be79e23c301e780cd185333"
+  },
+  "nodeGroups": [],
+  "id": "OezwxKBYPoye0x3i",
+  "tags": []
+}

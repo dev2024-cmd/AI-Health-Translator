@@ -1,4 +1,5 @@
 import uuid
+import logging
 from typing import List, Optional
 from fastapi import (
     APIRouter,
@@ -26,6 +27,7 @@ from app.models.caregiver import CaregiverLink
 from app.models.report import Report
 from app.models.report_file import ReportFile
 from app.models.explanation import Explanation
+from app.models.extracted_value import ExtractedValue
 from app.models.consent import Consent
 from app.pipeline.queue import enqueue_report_job
 from app.pipeline.translation import get_translation_provider
@@ -39,6 +41,7 @@ from app.schemas.report import (
 )
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
+logger = logging.getLogger(__name__)
 
 ALLOWED_MIME_TYPES = {
     "image/jpeg": ".jpg",
@@ -59,6 +62,236 @@ def validate_file_magic_bytes(content: bytes, declared_mime: str) -> bool:
     if declared_mime == "application/pdf":
         return content.startswith(b"%PDF-")
     return False
+
+
+@router.post("/ocr")
+async def scan_document_ocr(
+    file: UploadFile = File(...),
+):
+    """
+    Direct Neural OCR extraction endpoint for scanned documents, prescriptions, and lab reports.
+    Uses RapidOCR to extract high-accuracy text, handwriting, and tables.
+    """
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File exceeds maximum allowed size of 25MB.",
+        )
+    mime = file.content_type or "image/jpeg"
+    from app.pipeline.ocr.factory import get_ocr_provider
+    ocr_provider = get_ocr_provider()
+    ocr_result = await ocr_provider.process_document(content, mime)
+    return {
+        "text": ocr_result.full_text,
+        "page_count": ocr_result.page_count,
+        "pages": [{"page_number": p.page_number, "text": p.text} for p in ocr_result.pages],
+        "success": True,
+    }
+
+
+@router.post("/webhook/n8n", status_code=status.HTTP_201_CREATED)
+async def n8n_email_lab_report_webhook(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    patient_email: Optional[str] = Form(None),
+    patient_phone: Optional[str] = Form(None),
+    patient_id: Optional[str] = Form(None),
+    lab_name: Optional[str] = Form("Diagnostic Lab"),
+    doctor_name: Optional[str] = Form(None),
+    gemini_summary: Optional[str] = Form(None),
+    gemini_extracted_json: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Dedicated n8n Inbound Webhook:
+    Receives diagnostic lab reports sent via email, processed/fetched by n8n.
+    Extracts text using Neural RapidOCR, pairs with patient record, and stores in Health Vault.
+    """
+    # 1. Resolve Patient
+    patient = None
+    if patient_id:
+        p_res = await db.execute(select(Patient).where(Patient.id == patient_id))
+        patient = p_res.scalars().first()
+
+    if not patient and patient_email:
+        u_res = await db.execute(select(User).where(User.email == patient_email))
+        user_obj = u_res.scalars().first()
+        if user_obj:
+            p_res = await db.execute(select(Patient).where(Patient.user_id == user_obj.id))
+            patient = p_res.scalars().first()
+
+    if not patient and patient_phone:
+        clean_p = patient_phone.replace(" ", "").replace("-", "")
+        u_res = await db.execute(select(User).where(User.phone == clean_p))
+        user_obj = u_res.scalars().first()
+        if user_obj:
+            p_res = await db.execute(select(Patient).where(Patient.user_id == user_obj.id))
+            patient = p_res.scalars().first()
+
+    if not patient:
+        p_res = await db.execute(select(Patient).order_by(Patient.created_at.desc()))
+        patient = p_res.scalars().first()
+        if not patient:
+            patient = Patient(
+                id=str(uuid.uuid4()),
+                display_name=patient_email.split("@")[0] if patient_email else "Patient (Lab Email)",
+                preferred_language="en",
+                phone_for_ivr=patient_phone,
+                phone_type="smartphone",
+            )
+            db.add(patient)
+            await db.flush()
+
+    # 2. Read and validate file content
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File exceeds maximum allowed size of 25MB.",
+        )
+    mime = file.content_type or "application/pdf"
+    if mime not in ALLOWED_MIME_TYPES:
+        mime = "application/pdf"
+
+    # 3. Create Report Entity
+    report = Report(
+        id=str(uuid.uuid4()),
+        patient_id=patient.id,
+        uploaded_by=patient.user_id,
+        source="n8n_lab_email",
+        status="uploaded",
+        document_type="lab_report",
+        original_language="en",
+    )
+    db.add(report)
+    await db.flush()
+
+    # 4. Upload file to Storage
+    storage = get_storage_service()
+    file_ext = ALLOWED_MIME_TYPES.get(mime, ".pdf")
+    storage_key = f"reports/{report.id}/{uuid.uuid4()}{file_ext}"
+    await storage.upload_file(key=storage_key, data=content, mime_type=mime)
+
+    report_file = ReportFile(
+        id=str(uuid.uuid4()),
+        report_id=report.id,
+        storage_key=storage_key,
+        mime=mime,
+        page_count=1,
+        page_order=1,
+    )
+    db.add(report_file)
+
+    # 5. If Gemini pre-analyzed summary was provided by n8n, store directly into Explanation
+    if gemini_summary:
+        explanation = Explanation(
+            id=str(uuid.uuid4()),
+            report_id=report.id,
+            language="en",
+            text=gemini_summary,
+            reading_grade_level=5.0,
+            disclaimer_included=True,
+            status="ready",
+        )
+        db.add(explanation)
+        report.status = "ready"
+
+    # 6. If Gemini extracted lab/medicine values JSON was provided, store them
+    if gemini_extracted_json:
+        try:
+            import json
+            data = json.loads(gemini_extracted_json)
+
+            # If n8n passed a dictionary from its extraction node
+            if isinstance(data, dict):
+                # Update patient name if detected by Gemini
+                detected_name = data.get("patient_name")
+                if detected_name and detected_name.strip() and detected_name != "unreadable":
+                    patient.display_name = detected_name.strip()
+
+                # Handle prescription format
+                if "medicines" in data and isinstance(data["medicines"], list):
+                    report.document_type = "prescription"
+                    for med in data["medicines"]:
+                        med_name = med.get("medicine_name") or med.get("name") or "Prescribed Medicine"
+                        dosage = str(med.get("dosage", "1 dose"))
+                        instructions = med.get("special_instructions") or med.get("frequency") or ""
+                        val_obj = ExtractedValue(
+                            id=str(uuid.uuid4()),
+                            report_id=report.id,
+                            test_name=f"{med_name} ({dosage})",
+                            value=1.0,
+                            unit=instructions or "daily",
+                            ref_low=None,
+                            ref_high=None,
+                            flag="normal",
+                            page=1,
+                        )
+                        db.add(val_obj)
+
+                # Handle laboratory report format
+                tests = data.get("extracted_values") or data.get("tests") or data.get("results")
+                if isinstance(tests, list):
+                    for item in tests:
+                        raw_val = item.get("value") or item.get("result") or 0.0
+                        num_val = 0.0
+                        try:
+                            num_val = float(str(raw_val).replace("<", "").replace(">", "").strip())
+                        except Exception:
+                            num_val = 0.0
+
+                        val_obj = ExtractedValue(
+                            id=str(uuid.uuid4()),
+                            report_id=report.id,
+                            test_name=str(item.get("test_name") or item.get("name", "Test Parameter")),
+                            value=num_val,
+                            unit=str(item.get("unit", "")),
+                            ref_low=float(item.get("ref_low")) if item.get("ref_low") is not None else None,
+                            ref_high=float(item.get("ref_high")) if item.get("ref_high") is not None else None,
+                            flag=str(item.get("flag", "normal")).lower(),
+                            page=1,
+                        )
+                        db.add(val_obj)
+
+            elif isinstance(data, list):
+                for item in data:
+                    raw_val = item.get("value", 0.0)
+                    try:
+                        num_val = float(str(raw_val).replace("<", "").replace(">", "").strip())
+                    except Exception:
+                        num_val = 0.0
+
+                    val_obj = ExtractedValue(
+                        id=str(uuid.uuid4()),
+                        report_id=report.id,
+                        test_name=str(item.get("test_name", "Test Parameter")),
+                        value=num_val,
+                        unit=str(item.get("unit", "")),
+                        ref_low=float(item.get("ref_low")) if item.get("ref_low") is not None else None,
+                        ref_high=float(item.get("ref_high")) if item.get("ref_high") is not None else None,
+                        flag=str(item.get("flag", "normal")).lower(),
+                        page=1,
+                    )
+                    db.add(val_obj)
+        except Exception as e:
+            logger.warning(f"Error parsing Gemini extracted JSON from n8n: {e}")
+
+    await db.commit()
+
+    # If not pre-analyzed by n8n, enqueue background AI pipeline
+    if not gemini_summary:
+        background_tasks.add_task(enqueue_report_job, report.id)
+
+    return {
+        "success": True,
+        "report_id": report.id,
+        "patient_id": patient.id,
+        "patient_name": patient.display_name,
+        "source": "n8n_lab_email",
+        "status": report.status,
+        "message": f"Lab report from {lab_name} successfully ingested via n8n automation!",
+    }
 
 
 @router.post("", response_model=ReportUploadResponse, status_code=status.HTTP_201_CREATED)
@@ -84,20 +317,42 @@ async def upload_report(
         select(Consent).where(
             Consent.user_id == user_id,
             Consent.revoked_at.is_(None),
-        )
+        ).order_by(Consent.granted_at.desc())
     )
-    active_consent = consent_query.scalar_one_or_none()
+    active_consent = consent_query.scalars().first()
     if not active_consent and user_role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="DPDP Act 2023 Consent required before uploading health reports. Please review and grant consent at /v1/consents.",
         )
 
-    # 2. Verify Patient exists and user has authorization
-    patient_res = await db.execute(select(Patient).where(Patient.id == patient_id))
-    patient = patient_res.scalar_one_or_none()
-    if not patient:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+    # 2. Verify or resolve Patient for this user
+    if not patient_id or patient_id in ("pat-self", "self", user_id):
+        patient_res = await db.execute(select(Patient).where(Patient.user_id == user_id).order_by(Patient.created_at.desc()))
+        patient = patient_res.scalars().first()
+        if not patient:
+            user_res = await db.execute(select(User).where(User.id == user_id))
+            user_obj = user_res.scalars().first()
+            patient = Patient(
+                user_id=user_id,
+                display_name=user_obj.name if user_obj and user_obj.name else f"Patient {user_id[-4:]}",
+                preferred_language=user_obj.preferred_language if user_obj else "en",
+                phone_for_ivr=user_obj.phone if user_obj else None,
+                phone_type="smartphone",
+            )
+            db.add(patient)
+            await db.flush()
+        patient_id = patient.id
+    else:
+        patient_res = await db.execute(select(Patient).where(Patient.id == patient_id))
+        patient = patient_res.scalars().first()
+        if not patient:
+            user_pat = await db.execute(select(Patient).where(Patient.user_id == patient_id).order_by(Patient.created_at.desc()))
+            patient = user_pat.scalars().first()
+            if patient:
+                patient_id = patient.id
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
     # Patient permission check
     if user_role == "patient" and patient.user_id != user_id:
@@ -223,8 +478,18 @@ async def get_report_details(
     if user_role == "patient":
         patient_res = await db.execute(select(Patient).where(Patient.id == report.patient_id))
         patient = patient_res.scalar_one_or_none()
-        if not patient or patient.user_id != user_id:
+        if (not patient or patient.user_id != user_id) and report.uploaded_by != user_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif user_role == "caregiver":
+        link_res = await db.execute(
+            select(CaregiverLink).where(
+                CaregiverLink.caregiver_id == user_id,
+                CaregiverLink.patient_id == report.patient_id,
+                CaregiverLink.status == "active",
+            )
+        )
+        if not link_res.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Unlinked patient")
 
     # DPDP Audit Log on read
     await log_audit_event(
@@ -257,12 +522,16 @@ async def list_reports(
         selectinload(Report.explanations),
     ).order_by(Report.created_at.desc())
 
-    if patient_id:
-        stmt = stmt.where(Report.patient_id == patient_id)
-    elif user_role == "patient":
+    # Strict DPDP Act 2023 tenant isolation: enforce ownership for patients & caregivers
+    if user_role == "patient":
         pat_query = await db.execute(select(Patient.id).where(Patient.user_id == user_id))
         pat_ids = pat_query.scalars().all()
-        stmt = stmt.where(Report.patient_id.in_(pat_ids))
+        if patient_id and patient_id not in ("pat-self", "self", user_id) and patient_id not in pat_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Cannot access reports of another patient.")
+        if patient_id and patient_id in pat_ids:
+            stmt = stmt.where(Report.patient_id == patient_id)
+        else:
+            stmt = stmt.where((Report.patient_id.in_(pat_ids)) | (Report.uploaded_by == user_id))
     elif user_role == "caregiver":
         link_query = await db.execute(
             select(CaregiverLink.patient_id).where(
@@ -271,7 +540,12 @@ async def list_reports(
             )
         )
         pat_ids = link_query.scalars().all()
-        stmt = stmt.where(Report.patient_id.in_(pat_ids))
+        if patient_id and patient_id not in pat_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Unlinked patient reports.")
+        stmt = stmt.where(Report.patient_id == patient_id) if patient_id else stmt.where(Report.patient_id.in_(pat_ids))
+    elif user_role in ("admin", "health_worker"):
+        if patient_id:
+            stmt = stmt.where(Report.patient_id == patient_id)
 
     if status_filter:
         stmt = stmt.where(Report.status == status_filter)

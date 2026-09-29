@@ -53,6 +53,17 @@ app.add_middleware(
 # Mount API Routers
 app.include_router(v1_router)
 
+import traceback
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    print("UNHANDLED SERVER ERROR:\n", tb)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "traceback": tb},
+    )
+
 
 @app.get("/")
 async def root():

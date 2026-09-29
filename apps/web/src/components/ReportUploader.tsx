@@ -1,17 +1,27 @@
 import React, { useState, useRef } from 'react';
 import { UploadCloud, FileText, CheckCircle, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
 import { WebReport } from '../types/api.js';
+import { hydrateReportTranslations } from '../utils/reportLocalizer.js';
+import { runBrowserOcr, parseMedicalOcrText } from '../utils/medicalOcrParser.js';
 
 interface ReportUploaderProps {
   onUploadSuccess: (newReport: WebReport) => void;
   selectedPatientId: string;
   patientName: string;
+  onOpenSubscription?: () => void;
+  currentPlan?: 'free' | 'family' | 'pro';
+  reportsCount?: number;
+  maxFreeReports?: number;
 }
 
 export const ReportUploader: React.FC<ReportUploaderProps> = ({
   onUploadSuccess,
   selectedPatientId,
   patientName,
+  onOpenSubscription,
+  currentPlan = 'free',
+  reportsCount = 0,
+  maxFreeReports = 5,
 }) => {
   const [dragActive, setDragActive] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -20,9 +30,15 @@ export const ReportUploader: React.FC<ReportUploaderProps> = ({
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const isQuotaExhausted = currentPlan === 'free' && reportsCount >= maxFreeReports;
+
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isQuotaExhausted && onOpenSubscription) {
+      onOpenSubscription();
+      return;
+    }
     if (e.type === 'dragenter' || e.type === 'dragover') {
       setDragActive(true);
     } else if (e.type === 'dragleave') {
@@ -34,6 +50,10 @@ export const ReportUploader: React.FC<ReportUploaderProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
+    if (isQuotaExhausted && onOpenSubscription) {
+      onOpenSubscription();
+      return;
+    }
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       validateAndSetFile(e.dataTransfer.files[0]);
     }
@@ -41,12 +61,20 @@ export const ReportUploader: React.FC<ReportUploaderProps> = ({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
+    if (isQuotaExhausted && onOpenSubscription) {
+      onOpenSubscription();
+      return;
+    }
     if (e.target.files && e.target.files[0]) {
       validateAndSetFile(e.target.files[0]);
     }
   };
 
   const validateAndSetFile = (file: File) => {
+    if (isQuotaExhausted && onOpenSubscription) {
+      onOpenSubscription();
+      return;
+    }
     const validTypes = ['image/jpeg', 'image/png', 'application/pdf'];
     if (!validTypes.includes(file.type)) {
       alert('Please upload a valid JPEG, PNG, or PDF medical report document.');
@@ -60,222 +88,105 @@ export const ReportUploader: React.FC<ReportUploaderProps> = ({
   };
 
   const handleStartUpload = () => {
+    if (isQuotaExhausted) {
+      if (onOpenSubscription) onOpenSubscription();
+      return;
+    }
     if (!selectedFile) return;
 
     setIsProcessing(true);
-    setProgressStage('Uploading encrypted report to secure storage...');
-    setUploadProgress(20);
+    setProgressStage('Uploading and scanning report with AI Vision OCR...');
+    setUploadProgress(25);
 
     const reader = new FileReader();
-    reader.onload = (fileEvt) => {
+    reader.onload = async (fileEvt) => {
       const fileDataUrl = fileEvt.target?.result as string;
 
-      // Simulate pipeline progression
+      let ocrText = '';
+      try {
+        ocrText = await runBrowserOcr(selectedFile, (p, stage) => {
+          setUploadProgress(Math.min(p, 75));
+          setProgressStage(stage);
+        });
+      } catch (err) {
+        console.warn('OCR error in uploader:', err);
+      }
+
+      setProgressStage('Extracting clinical test findings & medication instructions...');
+      setUploadProgress(85);
+
+      // Parse the OCR text using the medical parser
+      const parsed = parseMedicalOcrText(
+        ocrText,
+        selectedFile.name,
+        patientName
+      );
+
+      // Sync with backend API if authenticated
+      let backendReportId: string | null = null;
+      try {
+        const token = localStorage.getItem('swasthya_access_token');
+        if (token) {
+          const formData = new FormData();
+          formData.append('files', selectedFile);
+          formData.append('patient_id', selectedPatientId || 'pat-self');
+          formData.append('source', 'web');
+          formData.append('original_language', 'en');
+
+          const uploadRes = await fetch('http://localhost:8000/v1/reports', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+
+          if (uploadRes.ok) {
+            const data = await uploadRes.json();
+            backendReportId = data.report_id;
+          }
+        }
+      } catch (err) {
+        console.warn('Backend sync error:', err);
+      }
+
+      setUploadProgress(100);
+      setProgressStage('Finalizing medical report translation and audio...');
+
+      const generatedReport: WebReport = {
+        id: backendReportId || 'rep-' + Date.now(),
+        patient_name: parsed.patientName || patientName || 'Patient',
+        patient_id: selectedPatientId,
+        patient_age: parsed.patientAge || 50,
+        patient_gender: parsed.patientGender || 'Unknown',
+        test_title: parsed.title,
+        date: parsed.date,
+        source: 'web',
+        status: 'ready',
+        original_language: 'en',
+        audio_available: true,
+        document_type: parsed.documentType,
+        doctor_name: parsed.doctorName,
+        doctor_clinic: parsed.clinicOrHospital,
+        doctor_license: parsed.doctorLicense,
+        file_name: selectedFile.name,
+        file_type: selectedFile.type,
+        image_url: fileDataUrl,
+        extracted_values: parsed.extractedValues,
+        plain_explanation: parsed.plainExplanation,
+        doctor_advice: (parsed as any).doctorAdvice,
+        follow_up_date: (parsed as any).followUpDate,
+      };
+
       setTimeout(() => {
-        setProgressStage('Running auto-rotation and OCR text extraction...');
-        setUploadProgress(50);
-
-        setTimeout(() => {
-          setProgressStage('Validating structured clinical values against reference protocols...');
-          setUploadProgress(80);
-
-          setTimeout(() => {
-            setProgressStage('Simplifying medical instructions into plain language & generating speech...');
-            setUploadProgress(100);
-
-            setTimeout(() => {
-              const fileNameLower = selectedFile.name.toLowerCase();
-              const isPrescription =
-                fileNameLower.includes('prescription') ||
-                fileNameLower.includes('rx') ||
-                fileNameLower.includes('doctor') ||
-                fileNameLower.includes('ibuprofen');
-              const isLipid = fileNameLower.includes('lipid') || fileNameLower.includes('chol');
-              const isSugar =
-                fileNameLower.includes('sugar') || fileNameLower.includes('glu') || fileNameLower.includes('hba1c');
-
-              let generatedReport: WebReport;
-
-              if (isPrescription) {
-                generatedReport = {
-                  id: 'rep-' + Date.now(),
-                  patient_name: 'Karlene Hizon',
-                  patient_id: selectedPatientId,
-                  patient_age: 71,
-                  patient_gender: 'Female',
-                  test_title: 'Doctor Prescription (Dr. Anna Ludwig, MD)',
-                  date: '2024-10-29',
-                  source: 'web',
-                  status: 'ready',
-                  original_language: 'en',
-                  audio_available: true,
-                  document_type: 'prescription',
-                  doctor_name: 'Dr. Anna Ludwig, MD',
-                  doctor_clinic: 'St Charles, Oak Street, CA',
-                  doctor_license: '00-9987-35',
-                  file_name: selectedFile.name,
-                  file_type: selectedFile.type,
-                  image_url: fileDataUrl,
-                  extracted_values: [
-                    {
-                      id: 'rx-1',
-                      test_name: 'Rx: Ibuprofen (400mg Tablets)',
-                      value: 1.0,
-                      unit: '1 tablet every 6h (Max 2400mg/day)',
-                      ref_low: null,
-                      ref_high: null,
-                      flag: 'normal',
-                      page: 1,
-                    },
-                    {
-                      id: 'rx-2',
-                      test_name: 'Duration & Food: 5 Days (Take with food)',
-                      value: 5.0,
-                      unit: 'Days course',
-                      ref_low: null,
-                      ref_high: null,
-                      flag: 'normal',
-                      page: 1,
-                    },
-                    {
-                      id: 'rx-3',
-                      test_name: 'Safety Warning: Avoid other NSAIDs concurrently',
-                      value: 0.0,
-                      unit: 'High Precaution',
-                      ref_low: null,
-                      ref_high: null,
-                      flag: 'high',
-                      page: 1,
-                    },
-                  ],
-                  plain_explanation: {
-                    en: `⚠️ CLINICAL SAFETY & DOCTOR PRESCRIPTION GUIDANCE
-Prescribing Doctor: Dr. Anna Ludwig, MD (St Charles, Oak Street, CA • Lic: 00-9987-35)
-Patient: Karlene Hizon (DOB: March 5, 1953) • Date: October 29, 2024
-
-Take this medicine ONLY as prescribed by Dr. Anna Ludwig. Never change your dose or stop taking medication without speaking to your doctor.
-
-📋 Exact Daily Medication Routine:
-1. Ibuprofen (400mg Tablets):
-   • Dose: Take 1 tablet by mouth every 6 hours.
-   • Duration: Take regularly for 5 days as directed.
-   • 🍲 Important: ALWAYS take with food or milk. Ibuprofen can irritate an empty stomach.
-   • ⛔ Maximum Safety Limit: Do NOT exceed 2400mg (6 tablets) in any 24-hour window.
-
-⚠️ Doctor's Warnings & Drug Precautions:
-• Avoid Other NSAIDs: Patient is advised to avoid other NSAIDs (such as Aspirin, Naproxen / Aleve, or Diclofenac) at the same time to prevent severe stomach ulcers and bleeding.
-• Stomach Monitoring: Monitor closely for stomach discomfort, heartburn, nausea, or indigestion. If severe, stop taking the medication and consult your doctor immediately.
-
-IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance only. Follow Dr. Anna Ludwig's instructions exactly.`,
-                    hi: `⚠️ नैदानिक सुरक्षा एवं डॉक्टर का पर्चा मार्गदर्शन
-चिकित्सक: डॉ. अन्ना लुडविग, एम.डी. (सेंट चार्ल्स, कैलिफ़ोर्निया)
-मरीज़: कार्लीन हिज़ोन • दिनांक: 29 अक्टूबर 2024
-
-इस दवा का सेवन केवल डॉ. अन्ना लुडविग के निर्देशानुसार ही करें। अपनी मर्जी से खुराक न बदलें।
-
-📋 आपकी दवा का दैनिक नियम:
-1. इबुप्रोफेन (Ibuprofen 400mg):
-   • खुराक: 1 गोली हर 6 घंटे में लें (कुल 5 दिनों के लिए)।
-   • 🍲 भोजन के साथ लें: पेट में जलन या दर्द से बचने के लिए इसे हमेशा खाने के बाद या दूध के साथ लें।
-   • ⛔ अधिकतम सीमा: 24 घंटे में 2400 मिलीग्राम (अधिकतम 6 गोलियां) से अधिक कभी न लें।
-
-⚠️ डॉक्टर की सावधानियां:
-• अन्य दर्द निवारक (NSAIDs जैसे एस्पिरिन, नेप्रोक्सेन) इस दवा के साथ बिल्कुल न लें।
-• पेट में तेज जलन, दर्द या उल्टी महसूस होने पर दवा रोककर तुरंत डॉक्टर से संपर्क करें।`,
-                    te: `⚠️ వైద్య భద్రత & డాక్టర్ ప్రిస్క్రిప్షన్ మార్గదర్శకాలు
-వైద్యులు: డాక్టర్ అన్నా లుడ్విగ్, MD (St Charles, Oak Street, CA)
-రోగి: కార్లీన్ హిజోన్ • తేదీ: 29 అక్టోబర్ 2024
-
-ఈ ఔషధాన్ని డాక్టర్ అన్నా లుడ్విగ్ సూచించిన విధంగా మాత్రమే వాడండి. మోతాదును మార్చకండి.
-
-📋 మీ ఔషధాల దినచర్య:
-1. ఇబుప్రోఫెన్ (Ibuprofen 400mg):
-   • మోతాదు: ప్రతి 6 గంటలకు 1 మాత్ర వేసుకోవాలి (5 రోజుల కోర్సు).
-   • 🍲 ఆహారంతో పాటు మాత్రమే: కడుపులో మంట లేదా గ్యాస్ రాకుండా ఉండటానికి ఎల్లప్పుడూ భోజనం తర్వాతే వేసుకోండి.
-   • ⛔ గరిష్ట పరిమితి: 24 గంటల్లో 2400mg (6 మాత్రల కంటే ఎక్కువ) తీసుకోకూడదు.
-
-⚠️ డాక్టర్ హెచ్చరికలు:
-• ఇతర పెయిన్ కిల్లర్స్ (ఆస్పిరిన్, నాప్రోక్సేన్ వంటి NSAIDs) దీనితో కలిపి వాడకూడదు.
-• కడుపు నొప్పి లేదా అసౌకర్యం అనిపిస్తే వెంటనే వైద్యుడిని సంప్రదించండి.`,
-                  },
-                };
-              } else {
-                generatedReport = {
-                  id: 'rep-' + Date.now(),
-                  patient_name: patientName,
-                  patient_id: selectedPatientId,
-                  patient_age: 64,
-                  patient_gender: 'Male',
-                  test_title: isLipid
-                    ? 'Lipid Profile (Cholesterol Panel)'
-                    : isSugar
-                    ? 'Diabetic Health Panel (HbA1c & Fasting Glucose)'
-                    : 'Complete Blood Count (CBC)',
-                  date: new Date().toISOString().split('T')[0],
-                  source: 'web',
-                  status: 'ready',
-                  original_language: 'en',
-                  audio_available: true,
-                  document_type: 'lab_report',
-                  file_name: selectedFile.name,
-                  file_type: selectedFile.type,
-                  image_url: fileDataUrl,
-                  plain_explanation: {
-                    en: isLipid
-                      ? 'Your total cholesterol and LDL are slightly higher than normal. Your good cholesterol is in acceptable limits. Discuss dietary adjustments with your doctor.'
-                      : isSugar
-                      ? 'Your blood glucose readings are elevated above standard fasting thresholds. Please share this with your primary care provider for personalized advice.'
-                      : 'Your hemoglobin and red blood cells are slightly low, while white blood cells and platelets are normal. You may experience mild fatigue.',
-                    hi: isLipid
-                      ? 'आपकी रिपोर्ट में कुल कोलेस्ट्रॉल सामान्य से अधिक है। अच्छा कोलेस्ट्रॉल संतुलित है। कृपया डॉक्टर से खान-पान के बारे में चर्चा करें।'
-                      : isSugar
-                      ? 'आपके ब्लड ग्लूकोज के परिणाम सामान्य सीमा से अधिक हैं। डॉक्टर से अवश्य परामर्श लें।'
-                      : 'आपके हीमोग्लोबिन और लाल रक्त कोशिकाओं का स्तर थोड़ा कम है। अन्य सभी कोशिकाएं सुरक्षित और सामान्य हैं।',
-                    te: isLipid
-                      ? 'మీ రక్తంలో మొత్తం కొలెస్ట్రాల్ సాధారణ స్థాయి కంటే ఎక్కువగా ఉంది. మంచి ఆహారపు అలవాట్ల కోసం వైద్యుడిని సంప్రదించండి.'
-                      : isSugar
-                      ? 'మీ రక్తంలో గ్లూకోజ్ స్థాయిలు పెరిగాయి. సరైన సలహా కోసం మీ వైద్యుడిని కలవండి.'
-                      : 'మీ రక్తంలో హిమోగ్లోబిన్ కొద్దిగా తక్కువగా ఉంది. మిగిలిన పరీక్షల ఫలితాలు సాధారణంగా ఉన్నాయి.',
-                    bn: 'আপনার রিপোর্ট অনুযায়ী হিমোগ্লোবিনের মাত্রা কিছুটা কম রয়েছে, তবে অন্যান্য কোষগুলি স্বাভাবিক রয়েছে।',
-                  },
-                  extracted_values: isLipid
-                    ? [
-                        { id: 'u1', test_name: 'Total Cholesterol', value: 228.0, unit: 'mg/dL', ref_low: 125.0, ref_high: 200.0, flag: 'high', page: 1 },
-                        { id: 'u2', test_name: 'Triglycerides', value: 175.0, unit: 'mg/dL', ref_low: 50.0, ref_high: 150.0, flag: 'high', page: 1 },
-                        { id: 'u3', test_name: 'HDL Cholesterol', value: 42.0, unit: 'mg/dL', ref_low: 40.0, ref_high: 60.0, flag: 'normal', page: 1 },
-                        { id: 'u4', test_name: 'LDL Cholesterol', value: 151.0, unit: 'mg/dL', ref_low: 0.0, ref_high: 100.0, flag: 'high', page: 1 },
-                      ]
-                    : isSugar
-                    ? [
-                        { id: 'u5', test_name: 'HbA1c', value: 7.6, unit: '%', ref_low: 4.0, ref_high: 5.7, flag: 'critical', page: 1 },
-                        { id: 'u6', test_name: 'Fasting Blood Sugar', value: 162.0, unit: 'mg/dL', ref_low: 70.0, ref_high: 100.0, flag: 'high', page: 1 },
-                      ]
-                    : [
-                        { id: 'u7', test_name: 'Hemoglobin', value: 11.4, unit: 'g/dL', ref_low: 13.0, ref_high: 17.0, flag: 'low', page: 1 },
-                        { id: 'u8', test_name: 'RBC Count', value: 4.2, unit: 'mil/uL', ref_low: 4.5, ref_high: 5.5, flag: 'low', page: 1 },
-                        { id: 'u9', test_name: 'WBC Count', value: 7800, unit: 'cells/mcL', ref_low: 4000, ref_high: 11000, flag: 'normal', page: 1 },
-                        { id: 'u10', test_name: 'Platelet Count', value: 210000, unit: '/mcL', ref_low: 150000, ref_high: 450000, flag: 'normal', page: 1 },
-                      ],
-                };
-              }
-
-              setIsProcessing(false);
-              setSelectedFile(null);
-              onUploadSuccess(generatedReport);
-            }, 600);
-          }, 600);
-        }, 600);
-      }, 600);
+        setIsProcessing(false);
+        setSelectedFile(null);
+        onUploadSuccess(hydrateReportTranslations(generatedReport));
+      }, 400);
     };
     reader.readAsDataURL(selectedFile);
-          }, 600);
-        }, 600);
-      }, 600);
-    }, 600);
   };
 
   return (
-    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm transition-all hover:shadow-md">
+    <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-xs transition-all hover:shadow-sm">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-lg font-bold text-slate-900">Upload New Medical Report</h3>
@@ -283,10 +194,42 @@ IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance onl
             For Patient: <strong className="text-brand-700">{patientName}</strong> (Encrypted at rest under DPDP Act 2023)
           </p>
         </div>
-        <span className="text-xs font-semibold px-2.5 py-1 bg-brand-50 text-brand-700 border border-brand-200 rounded-lg">
-          PDF, JPG, PNG up to 25MB
-        </span>
       </div>
+
+      {/* Free Quota Exhausted Alert Banner */}
+      {isQuotaExhausted && (
+        <div className="mb-5 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs font-bold text-amber-900 dark:text-amber-100">
+                Free Quota Limit Reached ({reportsCount}/{maxFreeReports} Reports Used)
+              </h4>
+              <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+                Your Ayush Free Tier allows up to {maxFreeReports} reports. Upgrade to unlock unlimited Neural Vision OCR, 2G IVR spoken calls, and SMS dispatches.
+              </p>
+              <div className="flex items-center gap-2 mt-1.5 text-[10px] text-amber-700 dark:text-amber-400 font-semibold">
+                <span>Direct Unit Costs: SMS ₹0.25</span>
+                <span>•</span>
+                <span>IVR ₹0.75/min</span>
+                <span>•</span>
+                <span>OCR ₹0.50/page</span>
+                <span>•</span>
+                <span>Clinical LLM ₹0.60/report</span>
+              </div>
+            </div>
+          </div>
+          {onOpenSubscription && (
+            <button
+              type="button"
+              onClick={onOpenSubscription}
+              className="px-3.5 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs whitespace-nowrap shadow-xs transition-colors shrink-0"
+            >
+              Upgrade Subscription
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Drag & Drop Box */}
       {!isProcessing && (
@@ -312,8 +255,8 @@ IMPORTANT MEDICAL DISCLAIMER: This explanation is for informational guidance onl
             id="file-upload-input"
           />
 
-          <div className="w-14 h-14 rounded-2xl bg-brand-100 text-brand-700 mx-auto flex items-center justify-center mb-3">
-            <UploadCloud className="w-7 h-7" />
+          <div className="w-12 h-12 rounded-lg bg-sky-50 text-sky-700 mx-auto flex items-center justify-center mb-3 border border-sky-100">
+            <UploadCloud className="w-6 h-6" />
           </div>
 
           <h4 className="text-base font-bold text-slate-800">

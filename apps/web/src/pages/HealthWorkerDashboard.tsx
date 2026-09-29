@@ -46,7 +46,7 @@ export const HealthWorkerDashboard: React.FC<HealthWorkerDashboardProps> = ({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
             <Stethoscope className="w-6 h-6" />
@@ -137,7 +137,7 @@ export const HealthWorkerDashboard: React.FC<HealthWorkerDashboardProps> = ({
         {/* Right Column: Detailed Triage & Action Panel (7 cols) */}
         <div className="lg:col-span-7">
           {activeTicket ? (
-            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-6">
+            <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-xs space-y-6">
               {/* Ticket Header */}
               <div className="flex items-start justify-between border-b border-slate-100 pb-4">
                 <div>
@@ -226,7 +226,7 @@ export const HealthWorkerDashboard: React.FC<HealthWorkerDashboardProps> = ({
               </div>
             </div>
           ) : (
-            <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 text-slate-400">
+            <div className="bg-white rounded-xl p-12 text-center border border-slate-200 text-slate-400">
               Select an escalation ticket to review details.
             </div>
           )}

@@ -6,6 +6,7 @@ from app.api.v1.health import router as health_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.languages import router as languages_router
 from app.api.v1.telephony import router as telephony_router
+from app.api.v1.reminders import router as reminders_router
 
 v1_router = APIRouter(prefix="/v1")
 
@@ -16,3 +17,4 @@ v1_router.include_router(health_router)
 v1_router.include_router(reports_router)
 v1_router.include_router(languages_router)
 v1_router.include_router(telephony_router)
+v1_router.include_router(reminders_router)

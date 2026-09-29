@@ -13,6 +13,7 @@ from app.models.call_log import CallLog
 from app.models.consent import Consent
 from app.models.audit_log import AuditLog
 from app.models.device import Device
+from app.models.reminder import Reminder, FamilyNotification
 
 __all__ = [
     "Base",
@@ -30,4 +31,6 @@ __all__ = [
     "CallLog",
     "Consent",
     "AuditLog",
+    "Reminder",
+    "FamilyNotification",
 ]
