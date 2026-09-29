@@ -18,6 +18,7 @@ import {
 import { WebReport } from '../types/api.js';
 import { hydrateReportTranslations } from '../utils/reportLocalizer.js';
 import { runBrowserOcr, parseMedicalOcrText } from '../utils/medicalOcrParser.js';
+import { API_BASE_URL } from '../config/api.js';
 
 interface CapturedPage {
   id: string;
@@ -513,7 +514,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               formData.append('patient_id', selectedPatientId || 'pat-self');
               formData.append('source', 'web');
               formData.append('original_language', 'en');
-              return fetch('http://localhost:8000/v1/reports', {
+              return fetch(`${API_BASE_URL}/v1/reports`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}` },
                 body: formData,

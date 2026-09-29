@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Phone, Radio, Volume2, ShieldCheck, UserCheck, AlertTriangle } from 'lucide-react';
+import { API_BASE_URL } from '../config/api.js';
 
 interface PhoneSimulatorModalProps {
   isOpen: boolean;
@@ -121,7 +122,7 @@ export const PhoneSimulatorModal: React.FC<PhoneSimulatorModalProps> = ({
     try {
       const token = localStorage.getItem('swasthya_access_token');
       if (token) {
-        const resp = await fetch('http://localhost:8000/v1/telephony/call', {
+        const resp = await fetch(`${API_BASE_URL}/v1/telephony/call`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -173,7 +174,7 @@ export const PhoneSimulatorModal: React.FC<PhoneSimulatorModalProps> = ({
       try {
         const token = localStorage.getItem('swasthya_access_token');
         if (token) {
-          fetch('http://localhost:8000/v1/telephony/dtmf', {
+          fetch(`${API_BASE_URL}/v1/telephony/dtmf`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

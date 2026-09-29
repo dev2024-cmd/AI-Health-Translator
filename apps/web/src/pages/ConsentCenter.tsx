@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Lock, Trash2, CheckCircle2, History, AlertCircle } from 'lucide-react';
+import { API_BASE_URL } from '../config/api.js';
 
 export const ConsentCenter: React.FC = () => {
   const [consentGranted, setConsentGranted] = useState<boolean>(true);
@@ -14,7 +15,7 @@ export const ConsentCenter: React.FC = () => {
   React.useEffect(() => {
     const token = localStorage.getItem('swasthya_access_token');
     if (token) {
-      fetch('http://localhost:8000/v1/consents', {
+      fetch(`${API_BASE_URL}/v1/consents`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then((res) => (res.ok ? res.json() : []))
@@ -41,12 +42,12 @@ export const ConsentCenter: React.FC = () => {
     if (token) {
       try {
         if (!nextState && activeConsentId) {
-          await fetch(`http://localhost:8000/v1/consents/${activeConsentId}/revoke`, {
+          await fetch(`${API_BASE_URL}/v1/consents/${activeConsentId}/revoke`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
           });
         } else if (nextState) {
-          const res = await fetch('http://localhost:8000/v1/consents', {
+          const res = await fetch(`${API_BASE_URL}/v1/consents`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

@@ -16,6 +16,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '@ai-health/shared';
+import { API_BASE_URL } from '../config/api.js';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -120,7 +121,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('http://localhost:8000/v1/auth/otp/request', {
+      const res = await fetch(`${API_BASE_URL}/v1/auth/otp/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
@@ -146,7 +147,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('http://localhost:8000/v1/auth/otp/verify', {
+      const res = await fetch(`${API_BASE_URL}/v1/auth/otp/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -185,7 +186,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMessage(null);
     try {
       const token = localStorage.getItem('swasthya_access_token');
-      const res = await fetch('http://localhost:8000/v1/auth/signup/profile', {
+      const res = await fetch(`${API_BASE_URL}/v1/auth/signup/profile`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -219,7 +220,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     try {
       const token = localStorage.getItem('swasthya_access_token');
       if (token) {
-        await fetch('http://localhost:8000/v1/consents', {
+        await fetch(`${API_BASE_URL}/v1/consents`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -255,7 +256,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMessage(null);
     try {
       const token = localStorage.getItem('swasthya_access_token');
-      const res = await fetch('http://localhost:8000/v1/auth/pin/set', {
+      const res = await fetch(`${API_BASE_URL}/v1/auth/pin/set`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -277,7 +278,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       // Ensure consent recorded for this user session
       try {
-        await fetch('http://localhost:8000/v1/consents', {
+        await fetch(`${API_BASE_URL}/v1/consents`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -316,7 +317,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('http://localhost:8000/v1/auth/pin/verify', {
+      const res = await fetch(`${API_BASE_URL}/v1/auth/pin/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -346,14 +347,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     try {
       const demoPhone = '9876543210';
       // 1. Request OTP
-      await fetch('http://localhost:8000/v1/auth/otp/request', {
+      await fetch(`${API_BASE_URL}/v1/auth/otp/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: demoPhone, purpose: 'login' }),
       }).catch(() => {});
 
       // 2. Verify with default dev OTP 123456
-      const verRes = await fetch('http://localhost:8000/v1/auth/otp/verify', {
+      const verRes = await fetch(`${API_BASE_URL}/v1/auth/otp/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: demoPhone, code: '123456' }),
@@ -365,7 +366,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         // Auto grant DPDP consent
         try {
-          await fetch('http://localhost:8000/v1/consents', {
+          await fetch(`${API_BASE_URL}/v1/consents`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

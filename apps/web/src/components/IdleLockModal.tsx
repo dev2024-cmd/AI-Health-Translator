@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Lock, ShieldAlert, RefreshCw, AlertCircle } from 'lucide-react';
+import { API_BASE_URL } from '../config/api.js';
 
 interface IdleLockModalProps {
   isLocked: boolean;
@@ -47,7 +48,7 @@ export const IdleLockModal: React.FC<IdleLockModalProps> = ({
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('http://localhost:8000/v1/auth/pin/verify', {
+      const res = await fetch(`${API_BASE_URL}/v1/auth/pin/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

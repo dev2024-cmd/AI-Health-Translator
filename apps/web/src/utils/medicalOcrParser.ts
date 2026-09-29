@@ -1,4 +1,5 @@
 import { ExtractedValueItem, WebReport } from '../types/api.js';
+import { API_BASE_URL } from '../config/api.js';
 
 export interface ParsedMedication {
   name: string;
@@ -754,7 +755,7 @@ export async function runBrowserOcr(
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-      const res = await fetch('http://localhost:8000/v1/reports/ocr', {
+      const res = await fetch(`${API_BASE_URL}/v1/reports/ocr`, {
         method: 'POST',
         body: formData,
         signal: controller.signal,

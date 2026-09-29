@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '@ai-health/shared';
 import { getUITranslation } from '../utils/translations.js';
+import { API_BASE_URL } from '../config/api.js';
 
 export interface ReminderItem {
   id: string;
@@ -222,7 +223,7 @@ export const FamilyProfiles: React.FC<FamilyProfilesProps> = ({
     // Sync to Backend Reminders API if available
     try {
       const token = localStorage.getItem('swasthya_access_token');
-      await fetch('http://localhost:8000/v1/reminders', {
+      await fetch(`${API_BASE_URL}/v1/reminders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -292,7 +293,7 @@ export const FamilyProfiles: React.FC<FamilyProfilesProps> = ({
     try {
       const token = localStorage.getItem('swasthya_access_token');
       if (token) {
-        await fetch(`http://localhost:8000/v1/reminders/${notif.id}/ping-family`, {
+        await fetch(`${API_BASE_URL}/v1/reminders/${notif.id}/ping-family`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

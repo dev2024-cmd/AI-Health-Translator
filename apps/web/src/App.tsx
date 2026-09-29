@@ -20,6 +20,7 @@ import { SubscriptionModal } from './components/SubscriptionModal.js';
 import { WebReport, EscalationTicket, INITIAL_REPORTS, INITIAL_ESCALATIONS } from './types/api.js';
 import { hydrateAllReports, hydrateReportTranslations, getLocalizedExplanation } from './utils/reportLocalizer.js';
 import { parseMedicalOcrText } from './utils/medicalOcrParser.js';
+import { API_BASE_URL } from './config/api.js';
 
 // Dedicated Official Administrator Identity (Completely separate from Patient accounts)
 export const DEFAULT_ADMIN_ACCOUNT = {
@@ -353,7 +354,7 @@ export const App: React.FC = () => {
       // Sync with backend API for this authenticated user
       const token = localStorage.getItem('swasthya_access_token');
       if (token && currentUser.id !== 'demo-patient-id') {
-        fetch('http://localhost:8000/v1/reports', {
+        fetch(`${API_BASE_URL}/v1/reports`, {
           headers: { Authorization: `Bearer ${token}` },
         })
           .then((res) => (res.ok ? res.json() : []))

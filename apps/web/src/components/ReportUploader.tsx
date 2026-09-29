@@ -3,6 +3,7 @@ import { UploadCloud, FileText, CheckCircle, AlertCircle, Loader2, ArrowRight } 
 import { WebReport } from '../types/api.js';
 import { hydrateReportTranslations } from '../utils/reportLocalizer.js';
 import { runBrowserOcr, parseMedicalOcrText } from '../utils/medicalOcrParser.js';
+import { API_BASE_URL } from '../config/api.js';
 
 interface ReportUploaderProps {
   onUploadSuccess: (newReport: WebReport) => void;
@@ -133,7 +134,7 @@ export const ReportUploader: React.FC<ReportUploaderProps> = ({
           formData.append('source', 'web');
           formData.append('original_language', 'en');
 
-          const uploadRes = await fetch('http://localhost:8000/v1/reports', {
+          const uploadRes = await fetch(`${API_BASE_URL}/v1/reports`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
             body: formData,
