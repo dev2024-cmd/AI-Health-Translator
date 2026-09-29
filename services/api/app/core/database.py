@@ -11,25 +11,54 @@ Base = declarative_base()
 SQLITE_FALLBACK_URL = "sqlite+aiosqlite:///./dev_health.db"
 
 
-def create_engine_and_session(url: str):
+def normalize_database_url(raw_url: str) -> str:
+    if not raw_url or not str(raw_url).strip():
+        return SQLITE_FALLBACK_URL
+    url = str(raw_url).strip()
+    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://") and "+asyncpg" not in url:
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
+
+
+def create_engine_and_session(raw_url: str):
+    url = normalize_database_url(raw_url)
     connect_args = {}
     if "sqlite" in url:
         connect_args["check_same_thread"] = False
 
-    eng = create_async_engine(
-        url,
-        echo=False,
-        future=True,
-        connect_args=connect_args,
-    )
-    session_factory = async_sessionmaker(
-        bind=eng,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-    )
-    return eng, session_factory
+    try:
+        eng = create_async_engine(
+            url,
+            echo=False,
+            future=True,
+            connect_args=connect_args,
+        )
+        session_factory = async_sessionmaker(
+            bind=eng,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
+        return eng, session_factory
+    except Exception as err:
+        logger.warning(f"Could not initialize database with URL '{url}': {err}. Falling back to SQLite.")
+        fallback_eng = create_async_engine(
+            SQLITE_FALLBACK_URL,
+            echo=False,
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        session_factory = async_sessionmaker(
+            bind=fallback_eng,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
+        return fallback_eng, session_factory
 
 
 # Initialize primary engine
